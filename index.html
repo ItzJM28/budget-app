@@ -37,6 +37,9 @@ header.top button{background:transparent;color:#e6f2f0;border-color:#5b8783;flex
 .tabs button[aria-pressed=true]{background:#e1efec;border-color:var(--accent);font-weight:600}
 .divider{text-align:center;color:var(--muted);margin:14px 0;font-size:.9rem}
 .err{background:#fbe9e7;color:#8c1d18;padding:10px 12px;border-radius:var(--r);margin-bottom:14px;font-size:.92rem;overflow-wrap:anywhere}
+.banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px}
+.banner span{flex:1 1 220px;min-width:0}
+.banner button{flex-shrink:0;border-color:#8c1d18;color:#8c1d18;background:#fff;font-weight:600}
 .ok{background:#e3f3ea;color:#14572f;padding:10px 12px;border-radius:var(--r);margin-bottom:14px;font-size:.92rem}
 .gbtn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px}
 .grid{display:grid;gap:16px;grid-template-columns:repeat(3,1fr);margin:16px 0}
@@ -75,7 +78,7 @@ button.icon{min-width:44px;padding:0;flex-shrink:0;display:grid;place-items:cent
 const SUPABASE_URL: string = "PASTE_YOUR_SUPABASE_URL";
 const SUPABASE_KEY: string = "PASTE_YOUR_PUBLISHABLE_KEY";
 
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 type Kind = "income" | "expense";
 interface Tx { id: string; kind: Kind; category: string; note: string | null; amount: number; happened_on: string; }
 
@@ -149,6 +152,7 @@ function Dashboard({ user }: { user: any }) {
   const [items, setItems] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
   const [month, setMonth] = useState(today().slice(0, 7));
   const [kind, setKind] = useState<Kind>("expense");
   const [amount, setAmount] = useState("");
@@ -156,19 +160,31 @@ function Dashboard({ user }: { user: any }) {
   const [note, setNote] = useState("");
   const [date, setDate] = useState(today());
   const [saving, setSaving] = useState(false);
+  const seq = useRef(0);
 
+  // The load-failed banner has its own state (loadErr) so saving or deleting never hides it,
+  // and clicking Retry keeps it on screen until the reload actually succeeds.
   const load = useCallback(async () => {
-    setLoading(true); setErr("");
+    const id = ++seq.current;
+    setLoading(true);
     const { data, error } = await sb.from("transactions").select("id,kind,category,note,amount,happened_on").order("happened_on", { ascending: false }).limit(1000);
-    if (error) setErr("Couldn't load your transactions: " + error.message + ". Check that the SQL table was created.");
-    else setItems((data as any[]).map((d) => ({ ...d, amount: Number(d.amount) })));
+    if (id !== seq.current) return; // a newer load is running; ignore this older answer
+    if (error) {
+      setItems([]);
+      setLoadErr("Couldn't load your transactions: " + error.message + ". Check your connection, then press Retry.");
+    } else {
+      setItems((data as any[]).map((d) => ({ ...d, amount: Number(d.amount) })));
+      setLoadErr("");
+    }
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const shown = useMemo(() => items.filter((t) => t.happened_on.startsWith(month)), [items, month]);
+  const blank = loading || !!loadErr; // no numbers are shown while loading or after a failed load
+  const shown = useMemo(() => (blank ? [] : items.filter((t) => t.happened_on.startsWith(month))), [items, month, blank]);
   const income = shown.filter((t) => t.kind === "income").reduce((s, t) => s + t.amount, 0);
   const spent = shown.filter((t) => t.kind === "expense").reduce((s, t) => s + t.amount, 0);
+  const fmt = (n: number) => (blank ? "—" : money(n));
   const byCat = useMemo(() => {
     const m: Record<string, number> = {};
     shown.filter((t) => t.kind === "expense").forEach((t) => { m[t.category] = (m[t.category] || 0) + t.amount; });
@@ -186,6 +202,7 @@ function Dashboard({ user }: { user: any }) {
     setAmount(""); setNote(""); load();
   }
   async function remove(id: string) {
+    setErr("");
     const { error } = await sb.from("transactions").delete().eq("id", id);
     if (error) setErr("Couldn't delete: " + error.message); else setItems((x) => x.filter((t) => t.id !== id));
   }
@@ -203,11 +220,17 @@ function Dashboard({ user }: { user: any }) {
           <div><label htmlFor="mo" style={{ position: "absolute", left: -9999 }}>Month</label>
             <input id="mo" type="month" value={month} onChange={(e: any) => e.target.value && setMonth(e.target.value)} /></div>
         </div>
-        {err && <div className="err" role="alert" style={{ marginTop: 12 }}>{err}</div>}
-        <div className="grid">
-          <div className="card stat"><div className="l">Income</div><div className="v inc">{money(income)}</div></div>
-          <div className="card stat"><div className="l">Spent</div><div className="v exp">{money(spent)}</div></div>
-          <div className="card stat"><div className="l">Left this month</div><div className="v" style={{ color: income - spent < 0 ? "var(--bad)" : "inherit" }}>{money(income - spent)}</div></div>
+        {loadErr && (
+          <div className="err banner" role="alert" style={{ marginTop: 12, marginBottom: 0 }}>
+            <span>{loadErr}</span>
+            <button type="button" onClick={load} disabled={loading}>{loading ? "Retrying…" : "Retry"}</button>
+          </div>
+        )}
+        {err && <div className="err" role="alert" style={{ marginTop: 12, marginBottom: 0 }}>{err}</div>}
+        <div className="grid" aria-busy={loading}>
+          <div className="card stat"><div className="l">Income</div><div className="v inc">{fmt(income)}</div></div>
+          <div className="card stat"><div className="l">Spent</div><div className="v exp">{fmt(spent)}</div></div>
+          <div className="card stat"><div className="l">Left this month</div><div className="v" style={{ color: !blank && income - spent < 0 ? "var(--bad)" : "inherit" }}>{fmt(income - spent)}</div></div>
         </div>
         <div className="cols">
           <div style={{ display: "grid", gap: 16 }}>
@@ -231,7 +254,7 @@ function Dashboard({ user }: { user: any }) {
             </form>
             <div className="card">
               <h2>Spending by category</h2>
-              {byCat.length === 0 ? <div className="empty">No expenses this month yet. Add one to see where your money goes.</div> :
+              {byCat.length === 0 ? <div className="empty">{loading ? "Loading…" : loadErr ? "Spending shows up here once your transactions load." : "No expenses this month yet. Add one to see where your money goes."}</div> :
                 byCat.map(([c, v]) => (
                   <div className="cat" key={c}>
                     <div className="h"><span>{c}</span><span className="num">{money(v)}</span></div>
@@ -240,8 +263,8 @@ function Dashboard({ user }: { user: any }) {
             </div>
           </div>
           <div className="card">
-            <h2>{shown.length} {shown.length === 1 ? "transaction" : "transactions"}</h2>
-            {loading ? <div className="empty">Loading…</div> : shown.length === 0 ?
+            <h2>{blank ? "Transactions" : `${shown.length} ${shown.length === 1 ? "transaction" : "transactions"}`}</h2>
+            {loading ? <div className="empty">Loading…</div> : loadErr ? <div className="empty">Your transactions couldn't be loaded. Press Retry above.</div> : shown.length === 0 ?
               <div className="empty">Nothing here for this month. Use the form to add your first income or expense.</div> :
               <ul className="list">
                 {shown.map((t) => (
