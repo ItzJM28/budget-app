@@ -72,18 +72,26 @@ button.icon{min-width:44px;padding:0;flex-shrink:0;display:grid;place-items:cent
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 <script type="text/babel" data-presets="typescript,react">
-const SUPABASE_URL: string = "PASTE_YOUR_SUPABASE_URL";
+const SUPABASE_URL: string = "https://hxthblueuasuqlxqkwsk.supabase.co";
 const SUPABASE_KEY: string = "PASTE_YOUR_PUBLISHABLE_KEY";
 
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 type Kind = "income" | "expense";
 interface Tx { id: string; kind: Kind; category: string; note: string | null; amount: number; happened_on: string; }
 
-const configured = SUPABASE_URL.startsWith("http") && SUPABASE_KEY.length > 20;
+const configured = SUPABASE_URL.startsWith("http") && !SUPABASE_KEY.startsWith("PASTE") && SUPABASE_KEY.length > 20;
 const sb: any = configured ? (window as any).supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 const money = (n: number) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(Number.isFinite(n) ? n : 0);
 const CATS = ["Groceries", "Rent", "Transport", "Bills", "Eating out", "Health", "Fun", "Salary", "Other"];
-const today = () => new Date().toISOString().slice(0, 10);
+const pad = (n: number) => String(n).padStart(2, "0");
+// Local date, not UTC, so late-evening entries don't land on the wrong day or month.
+const today = () => { const d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+// "2025-01" -> ["2025-01-01", "2025-02-01"] (start inclusive, end exclusive)
+const monthRange = (m: string): [string, string] => {
+  const [y, mo] = m.split("-").map(Number);
+  const next = mo === 12 ? (y + 1) + "-01" : y + "-" + pad(mo + 1);
+  return [m + "-01", next + "-01"];
+};
 
 function GoogleIcon() {
   return (
@@ -156,19 +164,25 @@ function Dashboard({ user }: { user: any }) {
   const [note, setNote] = useState("");
   const [date, setDate] = useState(today());
   const [saving, setSaving] = useState(false);
+  const seq = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     setLoading(true); setErr("");
-    const { data, error } = await sb.from("transactions").select("id,kind,category,note,amount,happened_on").order("happened_on", { ascending: false }).limit(1000);
-    if (error) setErr("Couldn't load your transactions: " + error.message + ". Check that the SQL table was created.");
+    const [from, to] = monthRange(month);
+    const { data, error } = await sb.from("transactions").select("id,kind,category,note,amount,happened_on")
+      .gte("happened_on", from).lt("happened_on", to)
+      .order("happened_on", { ascending: false }).limit(1000);
+    if (mine !== seq.current) return; // a newer month was picked; ignore this answer
+    if (error) { setItems([]); setErr("Couldn't load your transactions: " + error.message + ". Check that the transactions table exists."); }
     else setItems((data as any[]).map((d) => ({ ...d, amount: Number(d.amount) })));
     setLoading(false);
-  }, []);
+  }, [month]);
   useEffect(() => { load(); }, [load]);
 
-  const shown = useMemo(() => items.filter((t) => t.happened_on.startsWith(month)), [items, month]);
-  const income = shown.filter((t) => t.kind === "income").reduce((s, t) => s + t.amount, 0);
-  const spent = shown.filter((t) => t.kind === "expense").reduce((s, t) => s + t.amount, 0);
+  const shown = items;
+  const income = useMemo(() => shown.filter((t) => t.kind === "income").reduce((s, t) => s + t.amount, 0), [shown]);
+  const spent = useMemo(() => shown.filter((t) => t.kind === "expense").reduce((s, t) => s + t.amount, 0), [shown]);
   const byCat = useMemo(() => {
     const m: Record<string, number> = {};
     shown.filter((t) => t.kind === "expense").forEach((t) => { m[t.category] = (m[t.category] || 0) + t.amount; });
@@ -183,7 +197,8 @@ function Dashboard({ user }: { user: any }) {
     const { error } = await sb.from("transactions").insert({ kind, category: cat, note: note.trim() || null, amount: amt, happened_on: date });
     setSaving(false);
     if (error) { setErr("Couldn't save: " + error.message); return; }
-    setAmount(""); setNote(""); load();
+    setAmount(""); setNote("");
+    if (date.slice(0, 7) === month) load(); else setMonth(date.slice(0, 7)); // jump to the month you just saved into
   }
   async function remove(id: string) {
     const { error } = await sb.from("transactions").delete().eq("id", id);
@@ -272,7 +287,7 @@ function App() {
   if (!configured) return (
     <div className="auth"><div className="card">
       <h1>One setup step left</h1>
-      <p>Paste your Supabase URL and publishable key into the two <code>PASTE</code> lines at the top of this file, then reload.</p>
+      <p>The publishable key is still missing. Paste it into the <code>SUPABASE_KEY</code> line at the top of this file, then reload.</p>
     </div></div>);
   if (!ready) return <div className="auth"><div className="empty">Loading…</div></div>;
   return session ? <Dashboard user={session.user} /> : <Auth />;
