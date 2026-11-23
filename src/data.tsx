@@ -14,7 +14,8 @@ interface Category { id: string; name: string; kind: "income" | "expense"; }
 interface Budget { id: string; month: string; category: string; limit_centavos: number; }
 interface Goal { id: string; name: string; target_centavos: number; target_date: string | null; archived_at: string | null; created_at: string; }
 interface Contribution { id: string; goal_id: string; amount_centavos: number; happened_on: string; note: string | null; }
-interface Bill { id: string; name: string; amount_centavos: number; due_day: number; category: string; account_id: string | null; active: boolean; }
+// A bill you pay each month (kind "expense") or money you receive each month (kind "income").
+interface Bill { id: string; name: string; amount_centavos: number; due_day: number; category: string; account_id: string | null; active: boolean; kind: "expense" | "income"; }
 interface BillPayment { id: string; bill_id: string; month: string; transaction_id: string; paid_on: string; }
 
 const DEFAULT_CATEGORIES: [string, "income" | "expense"][] = [
@@ -68,7 +69,7 @@ function FinanceProvider({ user, children }: { user: any; children: any }) {
         q(sb.from("budgets").select("id,month,category,limit_centavos")),
         q(sb.from("goals").select("id,name,target_centavos,target_date,archived_at,created_at").order("created_at")),
         all((a, b) => sb.from("goal_contributions").select("id,goal_id,amount_centavos,happened_on,note").order("happened_on", { ascending: false }).range(a, b)),
-        q(sb.from("bills").select("id,name,amount_centavos,due_day,category,account_id,active").order("due_day")),
+        q(sb.from("bills").select("id,name,amount_centavos,due_day,category,account_id,active,kind").order("due_day")),
         all((a, b) => sb.from("bill_payments").select("id,bill_id,month,transaction_id,paid_on").range(a, b)),
       ]);
       if (id !== seq.current) return; // a newer load finished first

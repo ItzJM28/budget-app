@@ -6,3 +6,4 @@
 --   20261123144248_transactions_grants_and_policy_names.sql
 --   20261123144722_transactions_update_mismatch_check.sql
 --   20261123145701_peraflow_core.sql   (accounts, categories, budgets, goals, bills, account_balances, pay_bill)
+--   20261123153318_monthly_income.sql  (bills.kind: monthly income schedules)
