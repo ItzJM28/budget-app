@@ -81,7 +81,11 @@ button.icon{min-width:44px;padding:0;flex-shrink:0;display:grid;place-items:cent
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
-<script type="text/babel" data-presets="typescript,react">
+<script>
+// Babel ignores the TypeScript preset for inline scripts unless told to treat them as .tsx files
+Babel.registerPreset("tsx",{presets:[[Babel.availablePresets.typescript,{allExtensions:true,isTSX:true}]]});
+</script>
+<script type="text/babel" data-presets="tsx,react">
 // Public project URL and publishable key: both are safe to ship in the page. Row level security protects the data.
 const SUPABASE_URL: string = "https://hxthblueuasuqlxqkwsk.supabase.co";
 const SUPABASE_KEY: string = "sb_publishable_sRNP98itHiC_w7o_90iZtw_7NJjYp16";
