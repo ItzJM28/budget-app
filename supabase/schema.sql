@@ -27,12 +27,13 @@ alter table public.transactions enable row level security;
 
 grant select, insert, update, delete on public.transactions to authenticated;
 
-create policy "Read own transactions" on public.transactions
+-- Policy names match the live project exactly.
+create policy "Users can read their own transactions" on public.transactions
   for select to authenticated using (user_id = (select auth.uid()));
-create policy "Add own transactions" on public.transactions
+create policy "Users can add their own transactions" on public.transactions
   for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "Edit own transactions" on public.transactions
+create policy "Users can edit their own transactions" on public.transactions
   for update to authenticated
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-create policy "Delete own transactions" on public.transactions
+create policy "Users can delete their own transactions" on public.transactions
   for delete to authenticated using (user_id = (select auth.uid()));
