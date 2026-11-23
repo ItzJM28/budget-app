@@ -24,6 +24,7 @@ const PAGES = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "transactions", label: "Transactions", icon: "transactions" },
   { id: "accounts", label: "Accounts", icon: "wallet" },
+  { id: "income", label: "Monthly income", icon: "arrow-in" },
   { id: "budgets", label: "Budgets", icon: "budget" },
   { id: "bills", label: "Bills", icon: "bills" },
   { id: "goals", label: "Savings goals", icon: "goal" },
@@ -112,7 +113,7 @@ function Dialogs({ modal, close }: { modal: any; close: () => void }) {
   switch (modal.type) {
     case "tx": return <TxForm tx={modal.tx} preset={modal.preset} onClose={close} />;
     case "account": return <AccountForm account={modal.account} onClose={close} />;
-    case "bill": return <BillForm bill={modal.bill} onClose={close} />;
+    case "bill": return <BillForm bill={modal.bill} kind={modal.kind} onClose={close} />;
     case "pay": return <PayBillForm bill={modal.bill} month={modal.month} onClose={close} />;
     case "goal": return <GoalForm goal={modal.goal} onClose={close} />;
     case "contribute": return <ContributeForm goal={modal.goal} saved={modal.saved} withdraw={modal.withdraw} onClose={close} />;
@@ -130,7 +131,7 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
   useEffect(() => { document.title = (page === "dashboard" ? "" : (PAGES.find((p) => p.id === page)?.label || "Settings") + " · ") + "PeraFlow"; }, [page]);
   const paid = f.paidFor(f.thisMonth);
   const today = M.today();
-  const dueSoon = f.bills.filter((b: Bill) => b.active && !paid[b.id] && ["overdue", "due-soon"].includes(M.billStatus(b, false, f.thisMonth, today))).length;
+  const dueSoon = f.bills.filter((b: Bill) => !M.isIncomeItem(b) && b.active && !paid[b.id] && ["overdue", "due-soon"].includes(M.billStatus(b, false, f.thisMonth, today))).length;
   const budget = M.budgetReport(f.budgets.filter((b: Budget) => b.month === f.thisMonth), f.txs, f.thisMonth);
   const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const open = (m: any) => setModal(m);
@@ -184,6 +185,7 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
           ? <div className="page"><LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} /></div>
           : page === "transactions" ? <Transactions open={open} params={params} />
           : page === "accounts" ? <Accounts open={open} />
+          : page === "income" ? <Income open={open} />
           : page === "budgets" ? <Budgets />
           : page === "bills" ? <Bills open={open} />
           : page === "goals" ? <Goals open={open} />
