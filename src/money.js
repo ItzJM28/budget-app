@@ -180,11 +180,26 @@
     if (left <= 7) return "due-soon";
     return "upcoming";
   }
-  // Unpaid, active bills for a month. Paid bills are never counted as owed.
-  function unpaidBills(bills, paidIds, month) {
-    return (bills || []).filter(function (b) { return b.active && !paidIds[b.id]; })
-      .map(function (b) { return Object.assign({}, b, { due: dueDate(month, b.due_day) }); })
+  // The bills table also holds monthly income schedules (kind "income"). Older rows have no kind: they're bills.
+  function isIncomeItem(b) { return b.kind === "income"; }
+  function withDue(list, month) {
+    return list.map(function (b) { return Object.assign({}, b, { due: dueDate(month, b.due_day) }); })
       .sort(function (a, b) { return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; });
+  }
+  // Unpaid, active bills for a month. Paid bills are never counted as owed, and income is never a bill.
+  function unpaidBills(bills, paidIds, month) {
+    return withDue((bills || []).filter(function (b) { return !isIncomeItem(b) && b.active && !paidIds[b.id]; }), month);
+  }
+  // Monthly income for a month: what's expected from active schedules, what's in, and what's still to come.
+  function incomePlan(bills, paidIds, month) {
+    var items = withDue((bills || []).filter(function (b) { return isIncomeItem(b) && b.active; }), month);
+    var pending = items.filter(function (b) { return !paidIds[b.id]; });
+    return {
+      items: items,
+      pending: pending,
+      expected: sumBy(items, "amount_centavos"),
+      stillToCome: sumBy(pending, "amount_centavos")
+    };
   }
   function sumBy(list, key) { return (list || []).reduce(function (s, x) { return s + (x[key] || 0); }, 0); }
 
@@ -252,7 +267,8 @@
     monthName: monthName, dayLabel: dayLabel, daysBetween: daysBetween, addDays: addDays,
     active: active, inMonth: inMonth, summarize: summarize, byCategory: byCategory, monthlySeries: monthlySeries,
     dailyBalanceSeries: dailyBalanceSeries, isSpendable: isSpendable, accountTotals: accountTotals,
-    dueDate: dueDate, billStatus: billStatus, unpaidBills: unpaidBills, sumBy: sumBy, safeToSpend: safeToSpend,
+    dueDate: dueDate, billStatus: billStatus, unpaidBills: unpaidBills, isIncomeItem: isIncomeItem, incomePlan: incomePlan,
+    sumBy: sumBy, safeToSpend: safeToSpend,
     budgetReport: budgetReport, goalProgress: goalProgress, csvCell: csvCell, toCSV: toCSV
   };
   if (typeof module === "object" && module.exports) module.exports = PF;
