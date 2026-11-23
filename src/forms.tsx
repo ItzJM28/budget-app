@@ -115,36 +115,42 @@ function AccountForm({ account, onClose }: { account?: Account; onClose: () => v
 }
 
 /* ── Bill ───────────────────────────────────────────────────────────── */
-function BillForm({ bill, onClose }: { bill?: Bill; onClose: () => void }) {
+// Used for both monthly bills (kind "expense") and monthly income (kind "income").
+function BillForm({ bill, kind: kindProp, onClose }: { bill?: Bill; kind?: "expense" | "income"; onClose: () => void }) {
   const f = useFinance(), toast = useToast();
-  const cats = f.categories.filter((c: Category) => c.kind === "expense");
+  const kind = bill?.kind || kindProp || "expense", inc = kind === "income";
+  const cats = f.categories.filter((c: Category) => c.kind === kind);
   const [name, setName] = useState(bill?.name || "");
   const amt = useAmount(bill ? M.toInput(bill.amount_centavos) : "");
   const [day, setDay] = useState(String(bill?.due_day || 15));
-  const [cat, setCat] = useState(bill?.category || (cats.find((c: Category) => /bill/i.test(c.name)) || cats[0])?.name || "Bills & Utilities");
+  const [cat, setCat] = useState(bill?.category || (cats.find((c: Category) => (inc ? /salary/i : /bill/i).test(c.name)) || cats[0])?.name || (inc ? "Salary" : "Bills & Utilities"));
   const [acct, setAcct] = useState(bill?.account_id || f.live[0]?.id || "");
   const [active, setActive] = useState(bill ? bill.active : true);
   async function save() {
-    if (!name.trim()) return "Give the bill a name.";
+    if (!name.trim()) return inc ? "Give this income a name, like Salary." : "Give the bill a name.";
     if (!amt.check()) return "Check the amount.";
     const d = Number(day);
-    if (!(d >= 1 && d <= 31)) return "The due day must be between 1 and 31.";
-    const row = { name: name.trim(), amount_centavos: amt.cents, due_day: d, category: cat, account_id: acct || null, active };
+    if (!(d >= 1 && d <= 31)) return "The day must be between 1 and 31.";
+    if (!cat) return "Choose a category.";
+    const row = { name: name.trim(), amount_centavos: amt.cents, due_day: d, category: cat, account_id: acct || null, active, kind };
     if (bill) await f.api.updateBill(bill.id, row); else await f.api.addBill(row);
-    toast(bill ? "Bill updated." : `${row.name} added.`);
+    toast(bill ? (inc ? "Income updated." : "Bill updated.") : `${row.name} added.`);
   }
   return (
-    <FormModal title={bill ? "Edit bill" : "Add bill or subscription"} onClose={onClose} onSubmit={save} submitLabel={bill ? "Save changes" : "Add bill"}>
+    <FormModal title={bill ? (inc ? "Edit monthly income" : "Edit bill") : inc ? "Add monthly income" : "Add bill or subscription"} onClose={onClose} onSubmit={save}
+      submitLabel={bill ? "Save changes" : inc ? "Add income" : "Add bill"}>
       <div className="form-grid">
-        <Field className="full" label="Name" id="bl-name"><input id="bl-name" className="input" maxLength={60} value={name} onChange={(e: any) => setName(e.target.value)} placeholder="e.g. Meralco, PLDT, Netflix, Rent" /></Field>
-        <AmountInput id="bl-amt" amt={amt} label="Usual amount" />
-        <Field label="Due every month on day" id="bl-day" hint="Day 31 falls on the last day in shorter months.">
+        <Field className="full" label="Name" id="bl-name" hint={inc ? "Paid twice a month? Add two, like \"Salary (15th)\" and \"Salary (30th)\"." : undefined}>
+          <input id="bl-name" className="input" maxLength={60} value={name} onChange={(e: any) => setName(e.target.value)} placeholder={inc ? "e.g. Salary, Allowance, Rental income" : "e.g. Meralco, PLDT, Netflix, Rent"} />
+        </Field>
+        <AmountInput id="bl-amt" amt={amt} label={inc ? "Usual amount you receive" : "Usual amount"} />
+        <Field label={inc ? "Paid to you every month on day" : "Due every month on day"} id="bl-day" hint="Day 31 falls on the last day in shorter months.">
           <input id="bl-day" className="input num" type="number" min={1} max={31} value={day} onChange={(e: any) => setDay(e.target.value)} />
         </Field>
         <Field label="Category" id="bl-cat"><select id="bl-cat" className="input" value={cat} onChange={(e: any) => setCat(e.target.value)}>{cats.map((c: Category) => <option key={c.id}>{c.name}</option>)}</select></Field>
-        <Field label="Usually paid from" id="bl-acct">
+        <Field label={inc ? "Usually goes into" : "Usually paid from"} id="bl-acct">
           <select id="bl-acct" className="input" value={acct} onChange={(e: any) => setAcct(e.target.value)}>
-            <option value="">Choose when paying</option>
+            <option value="">{inc ? "Choose when it arrives" : "Choose when paying"}</option>
             {f.live.map((a: Account) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </Field>
@@ -158,20 +164,21 @@ function PayBillForm({ bill, month, onClose }: { bill: Bill; month: string; onCl
   const amt = useAmount(M.toInput(bill.amount_centavos));
   const [date, setDate] = useState(M.today());
   const [acct, setAcct] = useState(bill.account_id || f.live[0]?.id || "");
+  const inc = bill.kind === "income";
   async function save() {
     if (!amt.check()) return "Check the amount.";
-    if (!acct) return "Choose the account you paid from.";
+    if (!acct) return inc ? "Choose the account it went into." : "Choose the account you paid from.";
     await f.api.payBill(bill.id, month, acct, date, amt.cents);
-    toast(`${bill.name} marked paid.`);
+    toast(`${bill.name} marked ${inc ? "received" : "paid"}.`);
   }
-  if (!f.live.length) return <Modal title="Add an account first" onClose={onClose}><div className="modal-b"><p className="muted">Paying a bill records an expense from one of your accounts. Add an account first.</p></div></Modal>;
+  if (!f.live.length) return <Modal title="Add an account first" onClose={onClose}><div className="modal-b"><p className="muted">{inc ? "Receiving income adds it to one of your accounts." : "Paying a bill records an expense from one of your accounts."} Add an account first.</p></div></Modal>;
   return (
-    <FormModal title={`Pay ${bill.name}`} onClose={onClose} onSubmit={save} submitLabel="Mark as paid">
-      <p className="muted">This records the payment as an expense for {M.monthName(month)}. You can undo it later.</p>
+    <FormModal title={inc ? `Receive ${bill.name}` : `Pay ${bill.name}`} onClose={onClose} onSubmit={save} submitLabel={inc ? "Mark as received" : "Mark as paid"}>
+      <p className="muted">This records it as {inc ? "income" : "an expense"} for {M.monthName(month)}.{inc ? " Change the amount if this month's pay was different." : ""} You can undo it later.</p>
       <div className="form-grid">
-        <AmountInput id="pb-amt" amt={amt} label="Amount paid" autoFocus />
-        <Field label="Paid on" id="pb-date"><input id="pb-date" type="date" className="input" value={date} onChange={(e: any) => setDate(e.target.value)} /></Field>
-        <AccountSelect id="pb-acct" label="Paid from" value={acct} onChange={setAcct} accounts={f.live} />
+        <AmountInput id="pb-amt" amt={amt} label={inc ? "Amount received" : "Amount paid"} autoFocus />
+        <Field label={inc ? "Received on" : "Paid on"} id="pb-date"><input id="pb-date" type="date" className="input" value={date} onChange={(e: any) => setDate(e.target.value)} /></Field>
+        <AccountSelect id="pb-acct" label={inc ? "Received into" : "Paid from"} value={acct} onChange={setAcct} accounts={f.live} />
       </div>
     </FormModal>
   );
