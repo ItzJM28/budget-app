@@ -2,7 +2,7 @@
 
 Personal finance for the Philippines. Track your accounts, spending, budgets, bills and savings goals, all in pesos.
 
-Live at https://penny-budget-psi.vercel.app. The app is hosted on Vercel and uses Supabase for sign-in and data.
+Live at https://peraflowph.vercel.app (the old https://penny-budget-psi.vercel.app address still works). The app is hosted on Vercel and uses Supabase for sign-in and data.
 
 ## Files
 
@@ -14,7 +14,7 @@ Live at https://penny-budget-psi.vercel.app. The app is hosted on Vercel and use
 | `src/ui.tsx` | Icons, buttons, cards, dialogs and charts. |
 | `src/data.tsx` | The Supabase client and every read and write. |
 | `src/forms.tsx` | Forms for transactions, accounts, bills, goals and payments. |
-| `src/pages.tsx` | The Dashboard, Transactions, Accounts, Budgets, Bills, Goals and Settings pages. |
+| `src/pages.tsx` | The Dashboard, Transactions, Accounts, Monthly income, Budgets, Bills, Goals and Settings pages. |
 | `src/app.tsx` | Sign-in, the sidebar, routing and the theme. |
 | `supabase/migrations/` | Every database change, in order. |
 | `tests/money.test.js` | Run with `node tests/money.test.js`. |
