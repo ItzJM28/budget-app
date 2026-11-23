@@ -1,12 +1,11 @@
--- Penny Budget: Supabase schema
--- Creates the transactions table the app reads and writes.
+-- PeraFlow: Supabase baseline schema
+-- This is the transactions table as it exists in the live project ("ItzJM28's Project").
+-- Policy names and wording match the live database exactly.
+--
+-- Changes after this baseline live in supabase/migrations/ and are applied in filename order.
+-- Never edit this file to change the database; add a new migration instead.
+--
 -- Row level security is on: each signed-in person can only see and change their own rows.
---
--- How to run (once, on a restored project):
---   Supabase dashboard > SQL Editor > New query > paste this file > Run
---   Expected result: "Success. No rows returned."
---   Running it a second time will fail because the table already exists. That's harmless.
---
 -- No passwords, keys or tokens belong in this file.
 
 create table public.transactions (
@@ -27,12 +26,19 @@ alter table public.transactions enable row level security;
 
 grant select, insert, update, delete on public.transactions to authenticated;
 
-create policy "Read own transactions" on public.transactions
-  for select to authenticated using (user_id = (select auth.uid()));
-create policy "Add own transactions" on public.transactions
-  for insert to authenticated with check (user_id = (select auth.uid()));
-create policy "Edit own transactions" on public.transactions
+create policy "Users can read their own transactions" on public.transactions
+  for select to authenticated
+  using (user_id = auth.uid());
+
+create policy "Users can add their own transactions" on public.transactions
+  for insert to authenticated
+  with check (user_id = auth.uid());
+
+create policy "Users can edit their own transactions" on public.transactions
   for update to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-create policy "Delete own transactions" on public.transactions
-  for delete to authenticated using (user_id = (select auth.uid()));
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy "Users can delete their own transactions" on public.transactions
+  for delete to authenticated
+  using (user_id = auth.uid());
