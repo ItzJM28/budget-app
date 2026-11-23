@@ -25,6 +25,7 @@ _Last updated: 2026-11-23._
 | Accounts | Done | Six account types (cash, bank, savings, e-wallet, credit card, investment). Opening balance. Balances come from the database view. Transfers, history link, archive and restore. Net worth, assets and debts. |
 | Categories | Done | 18 defaults are added on first sign-in. Add and remove in Settings. |
 | Budgets | Done, partly | Monthly limit per category, planned versus actual, unbudgeted spending, "left to assign" (zero-based), copy from last month. **To do:** weekly budgets, rollover, envelopes, alerts. |
+| Monthly income | Done | Salary and other regular income: name, usual amount, pay day, category, account. Each month: Received (records income, amount can differ) or Undo. Shows expected, received and still to come. Dashboard Income card shows what's still expected; Budgets plans "left to assign" with expected income. Stored in `bills` with `kind = 'income'`. |
 | Bills and subscriptions | Done, partly | Due day, usual amount, paid/unpaid/overdue/due-soon status. Pay and undo are each one atomic database call. **To do:** reminders, a payment history view. |
 | Loans and debts | Not started | Credit-card debt shows on Accounts. Loans need their own tables. |
 | Savings goals | Done | Target, target date, add/withdraw, segmented progress, estimated finish date at the last 90 days' pace, the monthly amount needed to hit the date. |
@@ -62,14 +63,22 @@ All migrations are in `supabase/migrations/`, copied from the live migration his
   - **Additive only.** Every new table is owner-only (RLS). Composite foreign keys stop rows from pointing at another person's accounts, goals or bills.
   - **Checked live** inside a rolled-back test: balances, transfers, voids, and pay/unpay all came out right.
 
+- `20261123153318_monthly_income`:
+  - **New column:** `bills.kind` (`expense` or `income`, defaulting to `expense`).
+  - **Changed function:** `pay_bill` now records the schedule's own kind, so marking income as received saves an income transaction and its receipt record in one step.
+  - **Additive only.** Existing rows keep working unchanged.
+  - **Checked live** inside a rolled-back test: receiving ₱25,000 into a ₱1,000 account gave ₱26,000, and undoing it gave ₱1,000.
+
 ## Bugs fixed
+
+- **Bill rows on phones:** the bill name disappeared and the buttons were cut off. The rows now wrap onto two lines.
 
 - **Blank page:** Babel ignored the TypeScript preset (fixed in PR #7).
 - **Penny Budget leftovers:** the old app had USD, float money math and no accounts. All replaced.
 
 ## Tests
 
-- `node tests/money.test.js`: 15 tests covering parsing, formatting, transfers, voids, exact sums, Manila dates, month rollover, bills, budgets, goals, and CSV safety.
+- `node tests/money.test.js`: 16 tests covering monthly income (it's never counted as a bill you owe), parsing, formatting, transfers, voids, exact sums, Manila dates, month rollover, bills, budgets, goals, and CSV safety.
 - **Browser checks** against an in-memory stand-in for Supabase: every page in light and dark mode, the phone layout (no sideways scroll), adding a transfer (balances moved by exactly ₱1,500.50), voiding (totals dropped), paying a bill then voiding its expense (the bill went back to unpaid), budget edits (exact centavos; junk input refused), and the first-run state.
 
 ## Known limitations

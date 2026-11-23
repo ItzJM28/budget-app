@@ -279,5 +279,11 @@ table.t .row-actions{display:flex;gap:4px;justify-content:flex-end}
   .modal{max-width:none;border-radius:var(--r-lg) var(--r-lg) 0 0;max-height:92dvh}
   .toasts{left:16px;right:16px;bottom:16px}
   .search{max-width:none}
+  /* Bill and income rows: name on the first line; status, amount and buttons on the second */
+  .li.sched{flex-wrap:wrap;row-gap:8px}
+  .li.sched .m{flex:1 1 calc(100% - 60px)}
+  .li.sched .chip{margin-left:56px}
+  .li.sched .amt{min-width:0!important}
+  .li.sched .row-actions{margin-left:auto}
 }
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
