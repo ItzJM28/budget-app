@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f3d3e">
-<title>Penny Budget</title>
+<title>PeraFlow</title>
 <style>
 :root{--bg:#f4f6f5;--surface:#fff;--ink:#14201f;--muted:#4f625f;--line:#d9e1df;--accent:#0f6b63;--accent-ink:#fff;--bad:#b3261e;--good:#1b7a43;--r:10px}
 *{box-sizing:border-box}
@@ -91,30 +91,43 @@ const SUPABASE_URL: string = "https://hxthblueuasuqlxqkwsk.supabase.co";
 const SUPABASE_KEY: string = "sb_publishable_sRNP98itHiC_w7o_90iZtw_7NJjYp16";
 
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
+// The form only adds income and expenses. Transfers can exist in the table (Phase 3) and are never counted as either.
 type Kind = "income" | "expense";
-interface Tx { id: string; kind: Kind; category: string; note: string | null; amount: number; happened_on: string; }
+type RowKind = Kind | "transfer";
+// cents = whole PHP centavos (integer). Never pesos, never a float. ₱12.50 is 1250.
+interface Tx { id: string; kind: RowKind; category: string; note: string | null; cents: number; happened_on: string; }
 
 const configured = SUPABASE_URL.startsWith("http") && SUPABASE_KEY.length > 20;
 const sb: any = configured ? (window as any).supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
-const money = (n: number) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(Number.isFinite(n) ? n : 0);
+const TZ = "Asia/Manila";
+const PESO = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+// Takes whole centavos, shows pesos: 123456 -> "₱1,234.56". Dividing here is for display only; all math stays in centavos.
+const money = (cents: number) => PESO.format(Number.isFinite(cents) ? cents / 100 : 0);
 const CATS = ["Groceries", "Rent", "Transport", "Bills", "Eating out", "Health", "Fun", "Salary", "Other"];
 const pad = (n: number) => String(n).padStart(2, "0");
-// Local date, not UTC: otherwise on the evening of the 31st (US time) the app would think it's already next month.
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+// Today's date in Manila as "YYYY-MM-DD", whatever timezone the device is set to.
+// Built from date parts, so it doesn't depend on how a browser's locale happens to format dates.
+const DAY = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const today = () => {
+  const p: Record<string, string> = Object.fromEntries(DAY.formatToParts(new Date()).map((x: any) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+};
 
-// Strict amount parsing. Returns NaN for anything that isn't clearly a money amount.
-//   "12", "12.5", "12.50", ".75"   -> as typed
-//   "1,234", "1,234.56", "$1,234"   -> commas are thousands separators
-//   "12,5", "12,50"                 -> a single comma with 1-2 digits after is a decimal comma
-//   "12abc", "1.234.56", "1,23,4"   -> rejected (NaN), never silently saved
+// Strict amount parsing. Returns whole centavos, or NaN for anything that isn't clearly a money amount.
+// The math is done on the text (no floating point): "12.5" -> 1250.
+//   "12", "12.5", "12.50", ".75"    -> as typed (1200, 1250, 1250, 75)
+//   "1,234", "1,234.56", "₱1,234"   -> commas are thousands separators
+//   "12,5", "12,50"                  -> a single comma with 1-2 digits after is a decimal comma
+//   "12abc", "1.234.56", "1,23,4"    -> rejected (NaN), never silently saved
 function parseAmount(raw: string): number {
-  const s = raw.trim().replace(/^\$/, "").replace(/\s+/g, "");
+  const s = raw.trim().replace(/^(₱|PHP)/i, "").replace(/\s+/g, "");
   let norm: string | null = null;
   if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s)) norm = s.replace(/,/g, "");
   else if (/^\d+,\d{1,2}$/.test(s)) norm = s.replace(",", ".");
   else if (/^(\d+(\.\d{1,2})?|\.\d{1,2})$/.test(s)) norm = s;
   if (norm === null) return NaN;
-  return Math.round(Number(norm) * 100) / 100;
+  const [whole, frac = ""] = norm.split(".");
+  return Number(whole || "0") * 100 + Number((frac + "00").slice(0, 2));
 }
 
 // "2025-03" -> { from: "2025-03-01", to: "2025-04-01" } (to is exclusive, so every day of the month is included)
@@ -130,9 +143,16 @@ function shiftMonth(m: string, by: number) {
   const t = y * 12 + (mo - 1) + by;
   return `${Math.floor(t / 12)}-${pad((t % 12) + 1)}`;
 }
+// Built and formatted in UTC, so the label can never slip into the previous month.
 function monthName(m: string) {
   const [y, mo] = m.split("-").map(Number);
-  return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-PH", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+// "2025-03-07" -> "Mar 7"
+function dayLabel(d: string) {
+  const [y, mo, da] = d.split("-").map(Number);
+  if (!y || !mo || !da) return d;
+  return new Date(Date.UTC(y, mo - 1, da)).toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function GoogleIcon() {
@@ -147,6 +167,13 @@ function Chevron({ dir }: { dir: "l" | "r" }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={dir === "l" ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"} />
+    </svg>
+  );
+}
+function TrashIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
     </svg>
   );
 }
@@ -178,7 +205,7 @@ function Auth() {
   return (
     <div className="auth">
       <div className="card">
-        <h1>Penny Budget</h1>
+        <h1>PeraFlow</h1>
         <p style={{ color: "var(--muted)", margin: "4px 0 0" }}>Track what comes in and what goes out.</p>
         <div className="tabs" role="group" aria-label="Log in or register">
           <button type="button" aria-pressed={mode === "in"} onClick={() => setMode("in")}>Log in</button>
@@ -225,6 +252,7 @@ function Dashboard({ user }: { user: any }) {
   const attemptedFor = useRef<string | null>(null); // month we last started loading
 
   // Fetch only the selected month: from the 1st (inclusive) up to the 1st of next month (exclusive).
+  // Voided rows (voided_at set) are never loaded, so they can't count toward any total.
   const load = useCallback(async () => {
     const id = ++reqId.current;
     setLoading(true);
@@ -239,7 +267,8 @@ function Dashboard({ user }: { user: any }) {
     let data: any = null, error: any = null;
     try {
       ({ data, error } = await sb.from("transactions")
-        .select("id,kind,category,note,amount,happened_on")
+        .select("id,kind,category,note,amount_centavos,happened_on")
+        .is("voided_at", null)
         .gte("happened_on", from)
         .lt("happened_on", to)
         .order("happened_on", { ascending: false })
@@ -253,7 +282,11 @@ function Dashboard({ user }: { user: any }) {
       setLoadErr("Couldn't load " + monthName(month) + ": " + error.message + ". Check your connection, then try again.");
     } else {
       loadedFor.current = month;
-      setItems(((data as any[]) || []).map((d) => ({ ...d, amount: Number(d.amount) })));
+      // bigint arrives as a number or a string depending on size; Number() handles both (safe far beyond the 1e12 limit).
+      setItems(((data as any[]) || []).map((d) => ({
+        id: d.id, kind: d.kind, category: d.category, note: d.note, happened_on: d.happened_on,
+        cents: Number(d.amount_centavos),
+      })));
       setFailedFor(null); setLoadErr("");
     }
     setLoading(false);
@@ -262,25 +295,29 @@ function Dashboard({ user }: { user: any }) {
 
   const failed = failedFor === month;
   // "ok": this month's rows are on screen. "failed": this month failed to load (also while a retry runs).
-  // "loading": first load of this month is running. Never shows $0.00 unless the month really loaded.
+  // "loading": first load of this month is running. Never shows ₱0.00 unless the month really loaded.
   const view: "ok" | "loading" | "failed" = loadedFor.current === month ? "ok" : failed ? "failed" : "loading";
   const rows = view === "ok" ? items : [];
-  const income = useMemo(() => rows.filter((t) => t.kind === "income").reduce((s, t) => s + t.amount, 0), [rows]);
-  const spent = useMemo(() => rows.filter((t) => t.kind === "expense").reduce((s, t) => s + t.amount, 0), [rows]);
+  // All sums are whole centavos, so they're exact. Transfers are neither income nor spending, so they're left out here.
+  const income = useMemo(() => rows.filter((t) => t.kind === "income").reduce((s, t) => s + t.cents, 0), [rows]);
+  const spent = useMemo(() => rows.filter((t) => t.kind === "expense").reduce((s, t) => s + t.cents, 0), [rows]);
   const byCat = useMemo(() => {
     const m: Record<string, number> = {};
-    rows.filter((t) => t.kind === "expense").forEach((t) => { m[t.category] = (m[t.category] || 0) + t.amount; });
+    rows.filter((t) => t.kind === "expense").forEach((t) => { m[t.category] = (m[t.category] || 0) + t.cents; });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
   async function add(e: any) {
     e.preventDefault(); setErr(""); setAmountBad(false);
-    const amt = parseAmount(amount);
+    const amt = parseAmount(amount); // whole centavos
     if (!(amt > 0)) { setAmountBad(true); setErr("That amount doesn't look right. Type it like 12.50 or 1,234.56."); return; }
-    if (amt >= 1e10) { setAmountBad(true); setErr("That amount is too large. Keep it under 10,000,000,000."); return; }
+    // 1e12 centavos = ₱10,000,000,000. The legacy amount column is numeric(12,2) and the trigger still fills it,
+    // so anything this big would fail with a confusing database error. Stop it here with a clear message instead.
+    if (amt >= 1e12) { setAmountBad(true); setErr("That amount is too large. Keep it under ₱10,000,000,000."); return; }
     if (!date) { setErr("Pick a date for this transaction."); return; }
     setSaving(true);
-    const { error } = await sb.from("transactions").insert({ kind, category: cat, note: note.trim() || null, amount: amt, happened_on: date });
+    // Only amount_centavos is sent. The database trigger fills the legacy amount column from it.
+    const { error } = await sb.from("transactions").insert({ kind, category: cat, note: note.trim() || null, amount_centavos: amt, happened_on: date });
     setSaving(false);
     if (error) { setErr("Couldn't save: " + error.message); return; }
     setAmount(""); setNote("");
@@ -302,11 +339,12 @@ function Dashboard({ user }: { user: any }) {
     view === "failed" ? <div className="v na">Not loaded</div> :
     <div className={"v " + cls} style={style}>{money(n)}</div>;
   const failedText = loading ? "Trying " + monthName(month) + " again…" : "Couldn't load " + monthName(month) + ". Use Try again above.";
+  const top = byCat.length ? byCat[0][1] : 0;
 
   return (
     <>
       <header className="top"><div className="in">
-        <strong>Penny Budget</strong>
+        <strong>PeraFlow</strong>
         <span className="email" title={user.email}>{user.email}</span>
         <button onClick={() => sb.auth.signOut()}>Log out</button>
       </div></header>
@@ -336,47 +374,62 @@ function Dashboard({ user }: { user: any }) {
           <div style={{ display: "grid", gap: 16 }}>
             <form className="card" onSubmit={add} noValidate>
               <h2>Add a transaction</h2>
-              <div className="tabs" style={{ marginTop: 0 }} role="group" aria-label="Type">
+              <div className="tabs" role="group" aria-label="Type of transaction" style={{ marginTop: 0 }}>
                 <button type="button" aria-pressed={kind === "expense"} onClick={() => setKind("expense")}>Expense</button>
-                <button type="button" aria-pressed={kind === "income"} onClick={() => setKind("income")}>Income</button>
+                <button type="button" aria-pressed={kind === "income"} onClick={() => { setKind("income"); if (cat === "Groceries") setCat("Salary"); }}>Income</button>
               </div>
               <div className="row2">
-                <div className="field"><label htmlFor="am">Amount</label>
-                  <input id="am" inputMode="decimal" enterKeyHint="next" aria-invalid={amountBad} value={amount} onChange={(e: any) => { setAmount(e.target.value); setAmountBad(false); }} placeholder="0.00" /></div>
+                <div className="field"><label htmlFor="amt">Amount (₱)</label>
+                  <input id="amt" inputMode="decimal" enterKeyHint="next" autoComplete="off" value={amount}
+                    aria-invalid={amountBad} onChange={(e: any) => { setAmount(e.target.value); setAmountBad(false); }} placeholder="0.00" /></div>
                 <div className="field"><label htmlFor="dt">Date</label>
-                  <input id="dt" type="date" value={date} onChange={(e: any) => setDate(e.target.value)} required /></div>
+                  <input id="dt" type="date" value={date} onChange={(e: any) => setDate(e.target.value)} /></div>
               </div>
-              <div className="field"><label htmlFor="ct">Category</label>
-                <select id="ct" value={cat} onChange={(e: any) => setCat(e.target.value)}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
-              <div className="field"><label htmlFor="nt">Note (optional)</label>
-                <input id="nt" enterKeyHint="done" maxLength={120} value={note} onChange={(e: any) => setNote(e.target.value)} placeholder="e.g. Weekly shop" /></div>
-              <button className="primary" style={{ width: "100%" }} disabled={saving}>{saving ? "Saving…" : "Save transaction"}</button>
+              <div className="field"><label htmlFor="cat">Category</label>
+                <select id="cat" value={cat} onChange={(e: any) => setCat(e.target.value)}>
+                  {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select></div>
+              <div className="field"><label htmlFor="note">Note (optional)</label>
+                <input id="note" maxLength={120} enterKeyHint="done" value={note} onChange={(e: any) => setNote(e.target.value)} placeholder="e.g. SM Supermarket" /></div>
+              <button className="primary" style={{ width: "100%" }} disabled={saving}>
+                {saving ? "Saving…" : kind === "income" ? "Save income" : "Save expense"}
+              </button>
             </form>
-            <div className="card">
-              <h2>Spending by category</h2>
-              {byCat.length === 0 ? <div className="empty">{view === "loading" ? "Loading…" : view === "failed" ? failedText : "No expenses in " + monthName(month) + " yet. Add one to see where your money goes."}</div> :
-                byCat.map(([c, v]) => (
-                  <div className="cat" key={c}>
-                    <div className="h"><span>{c}</span><span className="num">{money(v)}</span></div>
-                    <div className="bar"><i style={{ transform: `scaleX(${spent ? v / spent : 0})`, width: "100%" }} /></div>
-                  </div>))}
-            </div>
+            <section className="card" aria-labelledby="bycat">
+              <h2 id="bycat">Spending by category</h2>
+              {view === "loading" ? <p className="empty">Loading…</p> :
+               view === "failed" ? <p className="empty">{failedText}</p> :
+               byCat.length === 0 ? <p className="empty">No spending in {monthName(month)} yet. Add an expense to see where your money goes.</p> :
+               byCat.map(([c, v]) => (
+                 <div className="cat" key={c}>
+                   <div className="h"><span>{c}</span><span className="num">{money(v)}</span></div>
+                   <div className="bar"><i style={{ transform: `scaleX(${top > 0 ? v / top : 0})` }} /></div>
+                 </div>
+               ))}
+            </section>
           </div>
-          <div className="card">
-            <h2>{view === "loading" ? "Loading…" : view === "failed" ? "Transactions" : rows.length + " " + (rows.length === 1 ? "transaction" : "transactions")}</h2>
-            {rows.length === 0 ?
-              <div className="empty">{view === "loading" ? "Fetching " + monthName(month) + "…" : view === "failed" ? failedText : "Nothing in " + monthName(month) + ". Use the form to add your first income or expense."}</div> :
+          <section className="card" aria-labelledby="txs">
+            <h2 id="txs">Transactions</h2>
+            {view === "loading" && items.length === 0 ? <p className="empty">Loading…</p> :
+             view === "failed" ? <p className="empty">{failedText}</p> :
+             rows.length === 0 ? <p className="empty">Nothing recorded for {monthName(month)}. Add your first income or expense with the form.</p> : (
               <ul className={"list" + (loading ? " stale" : "")} aria-busy={loading}>
                 {rows.map((t) => (
                   <li key={t.id}>
-                    <div className="m"><b>{t.category}</b><small title={t.note || ""}>{t.happened_on}{t.note ? " · " + t.note : ""}</small></div>
-                    <span className={"num " + (t.kind === "income" ? "inc" : "exp")}>{t.kind === "income" ? "+" : "−"}{money(t.amount)}</span>
-                    <button className="icon" disabled={deleting === t.id} aria-label={"Delete " + t.category + " transaction from " + t.happened_on} onClick={() => remove(t.id)}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5" /></svg>
-                    </button>
-                  </li>))}
-              </ul>}
-          </div>
+                    <div className="m">
+                      <b>{t.note || t.category}</b>
+                      <small title={t.category + " · " + dayLabel(t.happened_on)}>{t.category} · {dayLabel(t.happened_on)}</small>
+                    </div>
+                    <span className={"num " + (t.kind === "income" ? "inc" : t.kind === "expense" ? "exp" : "")}>
+                      {t.kind === "income" ? "+" : t.kind === "expense" ? "−" : ""}{money(t.cents)}
+                    </span>
+                    <button type="button" className="icon" aria-label={"Delete " + (t.note || t.category)}
+                      disabled={deleting === t.id} aria-busy={deleting === t.id} onClick={() => remove(t.id)}><TrashIcon /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
       </main>
     </>
@@ -384,24 +437,22 @@ function Dashboard({ user }: { user: any }) {
 }
 
 function App() {
-  const [session, setSession] = useState<any>(null);
-  const [ready, setReady] = useState(false);
+  const [session, setSession] = useState<any>(undefined);
   useEffect(() => {
     if (!sb) return;
-    sb.auth.getSession().then(({ data }: any) => { setSession(data.session); setReady(true); });
-    const { data } = sb.auth.onAuthStateChange((_e: any, s: any) => setSession(s));
-    return () => data.subscription.unsubscribe();
+    sb.auth.getSession().then(({ data }: any) => setSession(data.session)).catch(() => setSession(null));
+    const { data: { subscription } } = sb.auth.onAuthStateChange((_e: any, s: any) => setSession(s));
+    return () => subscription.unsubscribe();
   }, []);
   if (!configured) return (
-    <div className="auth"><div className="card">
-      <h1>One setup step left</h1>
-      <p>The Supabase URL and publishable key are missing from the top of this file.</p>
-    </div></div>);
-  if (!ready) return <div className="auth"><div className="empty">Loading…</div></div>;
-  // key resets the dashboard when someone else logs in, so one account's rows never flash for another.
-  return session ? <Dashboard key={session.user.id} user={session.user} /> : <Auth />;
+    <div className="auth"><div className="card"><h1>PeraFlow</h1>
+      <p style={{ color: "var(--muted)" }}>This page isn't connected to its database yet. Add the Supabase URL and publishable key at the top of the script.</p></div></div>
+  );
+  if (session === undefined) return <div className="auth"><p style={{ color: "var(--muted)" }}>Loading PeraFlow…</p></div>;
+  return session ? <Dashboard user={session.user} /> : <Auth />;
 }
-ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
