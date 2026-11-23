@@ -1,173 +1,182 @@
-# PROJECT_AUDIT.md
+# PeraFlow project audit
 
-Audit of the existing **Penny Budget** app, which is becoming **PeraFlow**. This is a read-only review. No app code was changed in this pull request.
+Audit of the existing app (formerly Penny Budget) before the PeraFlow work starts. Written for Phase 1 of `PERAFLOW_BRIEF.md`.
 
-- Written for: Phase 1 (Audit and rename)
-- Sources: `PERAFLOW_BRIEF.md`, `index.html` on `main`, `supabase/schema.sql`, `README.md`, and Bed's live Supabase check.
-- Status labels used below: **Fully implemented**, **Partially implemented**, **Not implemented**, **Needs improvement**, **Requires investigation**.
+- **Audited:** 2026-11-23. Database section re-checked against the live project after migration `transactions_centavos_transfer_void` (20261123143333).
+- **Sources:** `index.html` on `main` (first 20,000 of 24,710 characters; see "Limits of this audit"), `supabase/schema.sql`, `README.md`, `PERAFLOW_BRIEF.md`, and read-only queries against Supabase project "ItzJM28's Project" (ref `hxthblueuasuqlxqkwsk`).
+- **Status labels:** Fully implemented · Partially implemented · Not implemented · Needs improvement · Requires investigation.
 
-> Limit of this audit: the file reader shows the first 20,000 of the 24,710 characters of `index.html`. That covers everything up to the start of the "Add a transaction" form. The form fields, the transaction list markup and the final render/session code were not read directly. Items that depend on them are marked **Requires investigation**.
+## Limits of this audit
 
-## 1. What the app does today
+The file reader stops at 20,000 characters, so the last ~4,700 characters of `index.html` were not read. That part holds the add-transaction form body, the transaction list, the root component (session handling) and the render call. Anything that depends on it is marked **Requires investigation**, not guessed.
 
-A single-user-per-account budgeting page.
+## 1. Stack
+
+| Part | What's used | Status |
+|---|---|---|
+| UI | React 18.3.1 (UMD from jsDelivr, pinned) | Fully implemented |
+| Language | TypeScript compiled in the browser by `@babel/standalone@7` with the custom `tsx` preset | Fully implemented. **Keep the preset script.** |
+| Database client | `@supabase/supabase-js@2` (UMD from jsDelivr) | Fully implemented |
+| Database and auth | Supabase, project "ItzJM28's Project" | Fully implemented |
+| Hosting | Vercel project `penny-budget`, merge to `main` deploys production | Fully implemented |
+| Build step | None (no package.json) | By design |
+
+**Needs improvement:** `supabase-js@2` and `@babel/standalone@7` are major-version ranges, not exact versions. A new upstream release could change the live app without any commit. Pin exact versions.
+
+## 2. Architecture
+
+- One file, `index.html`: CSS in a `<style>` block, all app code in one `text/babel` script.
+- Components seen: `Auth`, `Dashboard`, `GoogleIcon`, `Chevron`. The root component is in the unread part.
+- Data loading: one query per month (`happened_on` from the 1st up to the 1st of next month), `.limit(1000)`, with request-id guarding so a slow old answer can't overwrite a newer month.
+- The publishable key is in the page. That's allowed by the brief. No service_role key was found in the part that was read.
+
+## 3. Database (live, re-checked after `transactions_centavos_transfer_void`)
+
+### 3.1 Migrations applied
+
+| Version | Name | In repo? |
+|---|---|---|
+| 20261123040428 | `create_transactions` | Only as `supabase/schema.sql` (not as a migration file) |
+| 20261123143333 | `transactions_centavos_transfer_void` | **No.** There is no `supabase/migrations/` folder on `main`. Written by Bed and approved by Bob, it ran at 14:33. Bed is saving it to the repo. |
+
+**Breaks brief rule 3** (every change saved under `supabase/migrations/`). Status: **Needs improvement** until both migrations are in the repo.
+
+### 3.2 Table `public.transactions` (0 rows)
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, default `gen_random_uuid()` |
+| `user_id` | uuid | default `auth.uid()`, FK to `auth.users(id)` |
+| `kind` | text | `income`, `expense` or **`transfer`** |
+| `category` | text | 1–60 characters |
+| `note` | text, nullable | up to 120 characters |
+| `amount` | numeric(12,2) | > 0. **Legacy pesos value**, kept in sync by trigger |
+| `amount_centavos` | **bigint, not null** | > 0. **Source of truth for money** (whole PHP centavos) |
+| `voided_at` | timestamptz, nullable | null = active; a date = voided, must not count anywhere |
+| `happened_on` | date | default `current_date` |
+| `created_at` | timestamptz | default `now()` |
+
+**Trigger `transactions_sync_amount`** (BEFORE INSERT, or UPDATE OF `amount`/`amount_centavos`; function has `search_path=''`, not security definer):
+- Insert with only `amount`: fills `amount_centavos = round(amount * 100)`. This is why today's Add button still saves.
+- Insert with only `amount_centavos`: fills `amount = amount_centavos / 100`.
+- Insert with both and they disagree: rejected with an error.
+- Update: whichever column changed drives the other.
+
+**Indexes:**
+- `transactions_pkey` (id)
+- `transactions_user_date_idx` (user_id, happened_on desc)
+- `transactions_user_active_date_idx` (user_id, happened_on desc) **where `voided_at is null`**, the active-rows index for totals
+
+### 3.3 Row level security
+
+RLS is **on**. Four policies, each limited to the row owner:
+
+| Live policy name | Command | Check |
+|---|---|---|
+| Users can read their own transactions | SELECT | `user_id = auth.uid()` |
+| Users can add their own transactions | INSERT | `user_id = auth.uid()` |
+| Users can edit their own transactions | UPDATE | `user_id = auth.uid()` (using and with check) |
+| Users can delete their own transactions | DELETE | `user_id = auth.uid()` |
+
+Status: **Fully implemented** for access control.
+
+**Needs improvement: policy wording drifts from `schema.sql`.** The repo file names them "Read/Add/Edit/Delete own transactions" and uses `(select auth.uid())`, which Postgres evaluates once per query instead of once per row. Live and repo should match. Fix in a migration (drop and recreate the policies with the same meaning inside one transaction, with no gap in protection), then update `schema.sql`.
+
+### 3.4 Grants
+
+| Role | Live grants | `schema.sql` grants |
+|---|---|---|
+| `authenticated` | SELECT, INSERT, UPDATE, DELETE, **TRUNCATE, REFERENCES, TRIGGER** | SELECT, INSERT, UPDATE, DELETE |
+| `anon` | none | none |
+
+**Needs improvement (security):** TRUNCATE ignores RLS and could wipe every user's rows. The web client (PostgREST) can't send TRUNCATE, so the real risk is low, but the grant shouldn't exist. Revoke TRUNCATE, REFERENCES and TRIGGER from `authenticated` in a migration. Bed drafted this earlier; it has not been applied.
+
+### 3.5 Schema vs. app
+
+`supabase/schema.sql` still describes the pre-migration table (`kind` only income/expense, no `amount_centavos`, no `voided_at`). It must be updated when the migration files land.
+
+## 4. Auth
 
 | Feature | Status | Notes |
 |---|---|---|
-| Email and password sign-in and registration | Fully implemented | `signInWithPassword` and `signUp`. Password minimum of 6 characters is checked in the page. Confirmation-email notice is shown. |
-| Google sign-in | Partially implemented | The button and `signInWithOAuth` call exist. The brief says the owner is switching the provider on in Supabase, so it cannot be confirmed working. **Requires investigation.** |
-| Log out | Fully implemented | Header button calls `auth.signOut()`. |
-| Add an income or expense | Fully implemented | Fields: kind, amount, category, note, date. Amount is strictly validated. |
-| Delete a transaction | Fully implemented | Hard delete, with a check that a row was really deleted. Conflicts with the "void, keep history" rule (see section 8). |
-| Edit a transaction | Not implemented | No update call exists in the code that was read. |
-| Month view | Fully implemented | Previous and next month, month picker. Only the chosen month is fetched. |
-| Totals: Income, Spent, Left this month | Fully implemented | Show "Loading…" or "Not loaded" instead of a false 0. |
-| Spending by category bars | Fully implemented | Sorted high to low. |
-| Load error with Try again | Fully implemented | Tied to the failed month. Late answers are ignored. |
-| Search, filters, CSV | Not implemented | |
-| Accounts, categories table, transfers, budgets, bills, loans, goals, analytics, calendar, AI assistant, dark mode | Not implemented | Matches the brief's "Not yet built" list. |
+| Email + password sign-in and sign-up | Fully implemented | 6-character minimum checked in the app; confirmation email message shown |
+| Google sign-in | Partially implemented | Button and `signInWithOAuth` exist. Whether the Google provider is switched on in Supabase is **Requires investigation** (brief says the owner is doing it). |
+| Log out | Fully implemented | Header button |
+| Session handling (restore on reload, auth state listener) | Requires investigation | In the unread part of `index.html` |
+| Leaked password protection | Not implemented | Supabase security warning `auth_leaked_password_protection`. Switch on in Auth settings. |
 
-The categories are a fixed list in code: Groceries, Rent, Transport, Bills, Eating out, Health, Fun, Salary, Other. The category is saved as free text on each transaction.
+## 5. UI
 
-## 2. Stack and architecture
-
-- **One file:** `index.html` holds the CSS, the markup shell and all app code. No `package.json`, no build step, no tests.
-- **Libraries from jsDelivr:** React 18.3.1 and ReactDOM 18.3.1 (pinned), `@supabase/supabase-js@2` (major version only), `@babel/standalone@7` (major version only).
-- **TypeScript in the browser:** `@babel/standalone` compiles the app script. A small `<script>` registers a `tsx` preset (`allExtensions:true, isTSX:true`), and the app script uses `type="text/babel" data-presets="tsx,react"`. **This must stay.** Without it the page goes blank.
-- **Components:** `Auth`, `Dashboard`, small icon components (`GoogleIcon`, `Chevron`) and a root component that picks between them (root not read).
-- **State:** React `useState`, `useMemo`, `useCallback`, `useRef`. No store, no router.
-- **Helpers:** `money`, `parseAmount`, `monthRange`, `shiftMonth`, `monthName`, `today`.
-- **Styling:** plain CSS with variables in `:root`, teal/green palette, single light theme. Good basics: 44px tap targets, focus rings, reduced-motion handling, `100dvh`, safe-area padding.
-- **Files in the repo:** `index.html`, `README.md`, `PERAFLOW_BRIEF.md`, `supabase/schema.sql`. There is no `supabase/migrations/` folder yet, which the brief requires for database changes.
-- **Hosting:** Vercel project `penny-budget`. A merge to `main` deploys production.
-
-## 3. Database (Supabase)
-
-Project "ItzJM28's Project" (ref `hxthblueuasuqlxqkwsk`, region ap-northeast-2) is **Running** (confirmed by Bed). The "paused" note in the shared memory is out of date. `doit-tasks` is paused and PeraFlow does not use it.
-
-**Table `public.transactions`** has 0 rows and RLS **on**.
-
-| Column | Type | Rule |
+| Feature | Status | Notes |
 |---|---|---|
-| id | uuid, primary key | `gen_random_uuid()` |
-| user_id | uuid, not null | default `auth.uid()`, references `auth.users(id)` on delete cascade |
-| kind | text, not null | check: `income` or `expense` only |
-| category | text, not null | check: 1 to 60 characters |
-| note | text, optional | check: up to 120 characters |
-| amount | numeric(12,2), not null | check: `> 0` |
-| happened_on | date, not null | default `current_date` |
-| created_at | timestamptz, not null | default `now()` |
+| Layout | Partially implemented | Single column with top header. No sidebar (Phase 2). |
+| Design tokens | Partially implemented | CSS variables, teal accent `#0f6b63`, not the emerald system from the brief |
+| Dark mode | Not implemented | |
+| Loading, failed-load with Try again, empty states | Fully implemented | Totals show "Loading…" / "Not loaded", never a fake 0 |
+| Focus rings, 44px targets, reduced motion | Fully implemented | |
+| Mobile | Partially implemented | Grids collapse under 760px; full phone check after Phase 2 |
+| Add-transaction form layout and transaction list layout | Requires investigation | Unread part |
 
-- **Index:** `transactions_user_date_idx` on `(user_id, happened_on desc)`.
-- **Policies:** four policies (select, insert, update, delete), all for the `authenticated` role only and limited to `user_id = (select auth.uid())`. Update has both `using` and `with check`. This is correct and efficient.
-- **Supabase security advisor:** one warning, "Leaked password protection disabled" (Auth setting, not a database issue).
-- **Gaps:** no `status`/void column, no `account_id`, no transfer kind, no categories table, no `updated_at`, no database functions. `schema.sql` tells the reader to paste it in the SQL Editor, but the brief requires migrations saved under `supabase/migrations/`.
+## 6. Modules
 
-## 4. Login setup
-
-- Email and password through Supabase Auth, with `emailRedirectTo` set to the page origin.
-- Google through `signInWithOAuth` with `redirectTo` set to the page origin. If the provider is off, the page shows Supabase's error plus a hint to switch it on under Authentication > Providers.
-- The page ships the project URL and the **publishable** key (`sb_publishable_…`). That is allowed by the brief. No service_role key was found in the code read.
-- Session handling (listening for sign-in and sign-out, showing `Auth` or `Dashboard`) is in the part of the file that was not read. **Requires investigation.**
-- If the config is missing, the page has a `configured` flag. Its fallback screen was not read.
-- Auth setting to fix: leaked password protection is off.
-
-## 5. Where "$" and "Penny Budget" appear
-
-**"Penny Budget"**
-- `index.html`: `<title>Penny Budget</title>`
-- `index.html`: `<h1>Penny Budget</h1>` on the sign-in card
-- `index.html`: `<strong>Penny Budget</strong>` in the top header
-- `README.md`: heading text "Penny Budget: a simple budgeting web app…"
-- `supabase/schema.sql`: first comment line "Penny Budget: Supabase schema"
-- Vercel project name `penny-budget` and the address `penny-budget-psi.vercel.app`. Renaming these is a production setting and needs the owner's approval.
-- Any more occurrences in the unread tail of `index.html` (re-run a search before the rename PR).
-
-**"$" and USD**
-- `money()` uses `Intl.NumberFormat(undefined, { currency: "USD" })`. Every total, category amount and list amount goes through it. Two problems: currency is USD, and the locale is the browser's, not `en-PH`.
-- `parseAmount()` strips a leading `$` and its comment lists `"$1,234"` as valid input.
-- The error text "Type it like 12.50 or 1,234.56" has no currency symbol, so it stays as is.
-- Code comments mention `$0.00` and "US time". They are comments only.
-- The amount input label or placeholder in the unread form may contain `$`. **Requires investigation.**
-
-## 6. Money storage versus the integer-centavo rule
-
-The rule: store and add money as whole centavos (integers), never floats.
-
-**Current state: does not follow the rule. Needs improvement.**
-
-- The database stores `numeric(12,2)` pesos-style decimals (for example `12.50`), not integer centavos.
-- `supabase-js` returns `numeric` as a number or string. The app does `Number(d.amount)`, which turns it into a floating-point number.
-- `parseAmount()` returns `Math.round(Number(norm) * 100) / 100`, a float again. Typing `1.005` is rejected by the regex (more than 2 decimals), which is good, but the value returned is still a float.
-- Totals are built with `reduce((s, t) => s + t.amount, 0)` on floats. Sums such as `0.1 + 0.2` can drift. Display rounding hides most of it, but it breaks the rule and will show up in comparisons and tests.
-- The insert sends a decimal number (`amount: amt`).
-- The size check `amt >= 1e10` matches `numeric(12,2)` (max just under 10 billion). It will need re-doing in centavos.
-- Safe to change now: the table is empty (0 rows), so no data conversion is needed. Plan: add `amount_centavos bigint` through a migration, switch the app to it, and only then retire the old column with the owner's approval. Never drop data without that approval.
-
-## 7. Gaps against the PeraFlow rules
-
-| Rule | Today | Status |
+| Module | Status | Notes |
 |---|---|---|
-| Currency is PHP (₱) | USD, browser locale | Needs improvement |
-| Timezone Asia/Manila | `today()` uses the browser's local date. A phone set to another timezone, or any user abroad, gets the wrong "today" and the wrong default month around midnight in Manila. `monthName` also uses the browser locale. | Needs improvement |
-| Amounts as integer centavos | Decimals and floats (section 6) | Needs improvement |
-| Transfers are not income or expenses | No transfer type, and no accounts to move money between. `kind` is limited to income and expense. | Not implemented |
-| Voided entries don't count | No void. Delete is permanent, which also loses history. | Not implemented |
-| Keep the transaction history | Hard delete removes the row. No audit trail. | Needs improvement |
-| Financial writes are atomic | Single-row inserts only, which are atomic by nature. Transfers will need a database function. | Not applicable yet |
-| New tables get RLS | Existing table has RLS and correct policies. | Fully implemented |
-| No service_role key in the page | None found in the code read. | Fully implemented |
-| Migrations saved under `supabase/migrations/` | Folder does not exist. Only `schema.sql`. | Not implemented |
-| Progress tracking in `PROJECT_PROGRESS.md` | File not yet in the repo (separate Phase 1 task). | Not implemented |
+| Month picker (prev/next, month input) | Fully implemented | |
+| Dashboard totals: Income, Spent, Left this month | Partially implemented | Float math, counts voided rows (see 8) |
+| Spending by category | Partially implemented | Same issues |
+| Add transaction | Partially implemented | Income/expense only, fixed category list, sends pesos in `amount` |
+| Delete transaction | Partially implemented | Hard delete. Brief wants void + keep history. |
+| Delete confirm step | **Requires investigation** | `remove()` itself doesn't ask. The button that calls it is in the unread part and may ask. |
+| Edit transaction | Not implemented | |
+| Void transaction | Not implemented in the app | Column exists in the database |
+| Transfer | Not implemented in the app | Allowed by the database |
+| Search, filters, CSV import/export | Not implemented | |
+| Accounts, categories table, split, recurring | Not implemented | |
+| Budgets, bills, loans, goals, analytics, calendar, AI assistant | Not implemented | Phases 4–6 |
 
-## 8. Technical debt, bugs and risks
+## 7. Missing features
 
-1. **Silent cut-off at 1,000 rows.** The month query uses `.limit(1000)`. A month with more rows would show totals that are too low, with no warning.
-2. **Unpinned CDN versions.** `supabase-js@2` and `@babel/standalone@7` can change under the app. No integrity (SRI) hashes. A bad CDN update could blank the page. Pin exact versions.
-3. **Babel compiles in the browser.** Slow first paint on phones, and a heavy dependency for production. Acceptable for now (the brief says keep it), but it is a known cost.
-4. **One file.** Every phase adds code to `index.html`. Phase 2 will need clear sections inside the file to stay reviewable. Do not split it without the owner's agreement.
-5. **Fixed category list in code.** Categories cannot be added, renamed or archived until the categories table exists (Phase 3).
-6. **Delete has no confirmation.** Clicking the delete button removes the row at once. The brief asks for a confirm dialog.
-7. **No automated tests.** Money helpers (`parseAmount`, `monthRange`, `shiftMonth`) are good candidates for the Phase 7 tests.
-8. **`schema.sql` is not idempotent** and its instructions point at the SQL Editor. Replace with versioned migrations.
-9. **Accessibility is mostly good** (labels, focus rings, `role="alert"`, 44px targets). Contrast of the muted text and the white-on-teal button should be re-checked when the emerald palette lands.
-10. **Repo hygiene.** Several fix pull requests (#2 to #7) were opened for the same file. The team agreed to merge only #7 and close the rest. Check `main` after that merge to confirm it matches the file this audit read.
+Everything in Phases 3–6 of the brief that isn't listed above as implemented: accounts with opening balances, categories table, transfers, edit, void, search, CSV, split/recurring, safe-to-spend, budgets, bills and subscriptions, loans and debts, savings goals, analytics, financial calendar, AI assistant. Plus dark mode and the sidebar shell (Phase 2).
+
+## 8. Technical debt and bugs
+
+1. **Money math uses floats.** `load()` maps rows to `Number(d.amount)` and totals add JavaScript decimals. `parseAmount` returns pesos rounded to 2 decimals. The database now has `amount_centavos`, but the app neither reads nor writes it. **Needs improvement (Phase 3):** select `amount_centavos`, add integers, convert only at display.
+2. **Voided rows still count.** The load query selects `id,kind,category,note,amount,happened_on`. It neither selects nor filters `voided_at`, so once voiding exists, voided entries would appear in the list and in Income, Spent and the category breakdown. Safe today (0 rows, no way to void yet). **Must be fixed in Phase 3 before the Void button ships:** add `.is("voided_at", null)` to totals queries.
+3. **The `Kind` type is `"income" | "expense"`.** Totals filter by kind, so a transfer row wouldn't be counted as income or spending (correct), but how the list would show it is **Requires investigation**.
+4. **Currency is USD.** `money()` uses `Intl.NumberFormat(undefined, { currency: "USD" })`; `parseAmount` strips a leading `$`. Phase 1 rename task switches to PHP (₱).
+5. **Dates follow the browser, not Asia/Manila.** `today()` builds the date from the device clock, and `monthName()` formats with `toLocaleDateString(undefined, …)`, so the device's locale and time zone apply. Both should use `Asia/Manila` (and a fixed `en-PH` locale for `monthName`).
+6. **1,000-row cap per month.** `.limit(1000)` silently cuts off larger months. Whether the user gets a warning is **Requires investigation**.
+7. **Fixed category list** (`CATS`) in code. Replaced by a categories table in Phase 3.
+8. **Name is still "Penny Budget"** in `<title>`, the sign-in heading, the header, `README.md` and the comment at the top of `schema.sql`. Other mentions in the unread part: **Requires investigation**.
+9. **Unpinned CDN versions** (see 1).
 
 ## 9. Security
 
-- RLS on and correct for the one table. Good.
-- Publishable key in the page is expected. No secret key seen.
-- Leaked password protection is disabled in Supabase Auth. Turn it on (a dashboard setting, owner-side).
-- Password minimum of 6 characters is weak. Raise it in Supabase Auth settings and in the form.
-- User text (note, category) is rendered through React, so it is escaped. No `dangerouslySetInnerHTML` was seen in the code read.
-- The CDN scripts run with full page access. Pinning versions and adding SRI hashes lowers that risk.
+| Item | Status |
+|---|---|
+| RLS on `transactions`, owner-only policies | Fully implemented |
+| Only the publishable key in the page | Fully implemented (in the part read) |
+| `anon` has no table grants | Fully implemented |
+| Extra `authenticated` grants: TRUNCATE, REFERENCES, TRIGGER | Needs improvement: revoke in a migration |
+| Policy wording differs from `schema.sql` (`auth.uid()` vs `(select auth.uid())`, different names) | Needs improvement |
+| Migrations not saved under `supabase/migrations/` | Needs improvement |
+| Leaked password protection off | Needs improvement |
+| Trigger function `transactions_sync_amount` | OK: not security definer, `search_path` locked to `''` |
 
-## 10. Prioritized fixes for later phases
+## 10. Recommendations (in order)
 
-**Do first (Phase 1, in progress)**
-1. Rename to PeraFlow: title, both headings, README, `schema.sql` comment. Keep the Vercel project name until the owner approves a change.
-2. Switch `money()` to PHP with the `en-PH` locale, and stop treating `$` as the expected input symbol.
-3. Use Asia/Manila for "today", the default month and the displayed dates.
-4. Write `PROJECT_PROGRESS.md`.
+1. **Phase 1 (now):** merge this audit and `PROJECT_PROGRESS.md`. Rename to PeraFlow and switch to ₱ with Asia/Manila for both `today()` and `monthName()`. That needs the full `index.html` read first.
+2. **Repo hygiene (Bed):** add `supabase/migrations/20261123040428_create_transactions.sql` and `supabase/migrations/20261123143333_transactions_centavos_transfer_void.sql` with the exact SQL that ran. Update `schema.sql` to match the live table.
+3. **Small security migration (Bed):** revoke TRUNCATE, REFERENCES and TRIGGER from `authenticated`, and recreate the four policies with `(select auth.uid())` and the repo's names. Ship it as one reviewed migration, also saved in the repo.
+4. **Owner:** switch on leaked password protection, and confirm Google is enabled under Authentication > Providers.
+5. **Phase 3 money work:** read/write `amount_centavos` only, integer math, filter `voided_at is null` everywhere totals are computed, replace hard delete with void, and add transfers as one atomic database function.
+6. Pin `supabase-js` and `@babel/standalone` to exact versions.
 
-**Phase 2 (app shell)**
-5. Sidebar layout, emerald and white design system, light and dark themes via CSS variables.
-6. Shared components: card, button, input, table, empty state, skeleton, error, confirm dialog. Add the delete confirmation here.
-7. Pin CDN versions and add SRI hashes, taking care not to touch the `tsx` Babel preset script.
+## Requires investigation (summary)
 
-**Phase 3 (core money)**
-8. First migration, saved in `supabase/migrations/`: `accounts`, `categories`, and new `transactions` columns (`amount_centavos bigint`, `account_id`, `status` for void, `transfer_group_id`, `updated_at`), all with RLS.
-9. Move the app to integer centavos end to end: parse to an integer, sum integers, format by dividing at display time only.
-10. Add edit and void, and keep voided rows out of every total. Replace hard delete with void.
-11. Transfers through one database function so both sides are written in one step, and counted as neither income nor expense.
-12. Search, filters, CSV export and import. Raise or remove the 1,000-row limit with paging, and warn if a result is cut off.
-13. Dashboard totals: balance, income, expenses, net cash flow.
-
-**Phases 4 to 7**
-14. Budgets, bills and loans (principal, interest and fees kept separate), goals, analytics, calendar, then the assistant (numbers always come from app code).
-15. Unit tests for the money helpers, and a production readiness pass.
-
-**Owner-side settings**
-16. Finish switching on Google sign-in in Supabase and test it on the live address.
-17. Turn on leaked password protection and raise the minimum password length.
-18. Decide whether to rename the Vercel project and address from `penny-budget`.
+- Delete has a confirm step or not (button is in the unread part).
+- Warning when a month hits the 1,000-row limit.
+- Add-form and list layout; how a `transfer` row would render.
+- Session restore and auth listener.
+- Further "Penny Budget" or "$" text in the unread part.
+- Google provider switched on in Supabase.
