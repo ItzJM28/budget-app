@@ -64,7 +64,7 @@ function Dashboard({ open }: { open: (m: any) => void }) {
       <div className="grid g-stats">
         <Card className="hero">
           <div className="label">Total balance</div>
-          <div className="big money">{M.peso(totals.netWorth)}<small>PHP</small></div>
+          <div className="big money"><CountUp cents={totals.netWorth} /><small>PHP</small></div>
           <div className="spark"><Sparkline values={balanceLine} color="#7fe0b7" height={44} /></div>
           <div className="split">
             <div>Safe to spend<b className="money">{M.peso(safe)}</b></div>
@@ -83,7 +83,7 @@ function Dashboard({ open }: { open: (m: any) => void }) {
         <Card className="span-2" title="Cash flow" subtitle="Monthly income, spending and net saved"
           action={<Seg label="Range" value={range} onChange={setRange} options={[["3", "3M"], ["6", "6M"], ["12", "1Y"]]} />}>
           <div className="legend" style={{ marginBottom: 8 }}><span><i style={{ background: "var(--income)" }} />Income</span><span><i style={{ background: "var(--spend)" }} />Spending</span><span><i style={{ background: "var(--net)", borderRadius: 99 }} />Net saved</span></div>
-          <CashflowChart series={chart} />
+          <CashflowChart key={range + month} series={chart} />
           <div className="totals-row"><div>Average income<b className="money">{M.peso(avg("income"))}</b></div><div>Average spending<b className="money">{M.peso(avg("spending"))}</b></div><div>{M.monthName(month, true)} savings rate<b>{sum.income ? M.percent(sum.net, sum.income) + "%" : "—"}</b></div></div>
         </Card>
         <Card title="Spending plan" subtitle={`${M.monthName(month)} budget`} action={budget.limit ? <span className={"chip" + (budget.spent > budget.limit ? " danger" : "")}>{M.percent(budget.spent, budget.limit)}% used</span> : undefined}>
@@ -161,7 +161,7 @@ function StatCard({ icon, tone, label, value, sub, line }: { icon: string; tone:
   return (
     <section className="card stat">
       <div className="stat-h"><span className="stat-ic" style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}><Icon name={icon} size={16} /></span>{label}</div>
-      <div className="val money">{M.peso(value)}</div>
+      <div className="val money"><CountUp cents={value} /></div>
       <div className="spark"><Sparkline values={line} color={tone} height={34} fill={false} /></div>
       <div className="sub">{sub}</div>
     </section>
@@ -290,7 +290,7 @@ function Accounts({ open }: { open: (m: any) => void }) {
       </PageHead>
       {f.error && <LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} />}
       <div className="grid g-stats">
-        <Card className="hero"><div className="label">Net worth</div><div className="big money">{M.peso(totals.netWorth)}</div><div className="split"><div>Assets<b className="money">{M.peso(totals.assets)}</b></div><div>Debts<b className="money">{M.peso(totals.debts)}</b></div></div></Card>
+        <Card className="hero"><div className="label">Net worth</div><div className="big money"><CountUp cents={totals.netWorth} /></div><div className="split"><div>Assets<b className="money">{M.peso(totals.assets)}</b></div><div>Debts<b className="money">{M.peso(totals.debts)}</b></div></div></Card>
         <Card><div className="stat-h muted">Spendable now</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(totals.spendable)}</div><div className="hint" style={{ marginTop: 6 }}>Cash, bank, savings and e-wallets</div></Card>
         <Card><div className="stat-h muted">Owed on credit cards</div><div className="val money exp" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(-M.sumBy(f.live.filter((a: Account) => a.type === "credit" && a.balance < 0), "balance"))}</div><div className="hint" style={{ marginTop: 6 }}>Pay it down with a transfer</div></Card>
         <Card><div className="stat-h muted">Accounts</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{f.live.length}</div><div className="hint" style={{ marginTop: 6 }}>{archived.length ? `${archived.length} archived` : "All active"}</div></Card>
@@ -349,7 +349,7 @@ function Budgets() {
         <Button icon="undo" disabled={!prevCount} title={prevCount ? undefined : "Last month has no budget"} onClick={async () => { try { await f.api.copyBudgets(prev, month); toast(`Copied ${M.monthName(prev)}'s budget.`); } catch (e) { toast(friendlyError(e), true); } }}>Copy last month</Button>
       </PageHead>
       <div className="grid g-stats">
-        <Card className="hero"><div className="label">Left to spend</div><div className="big money">{M.peso(rep.limit - rep.spent)}</div><div className="split"><div>Planned<b className="money">{M.peso(rep.limit)}</b></div><div>Spent in plan<b className="money">{M.peso(rep.spent)}</b></div></div></Card>
+        <Card className="hero"><div className="label">Left to spend</div><div className="big money"><CountUp cents={rep.limit - rep.spent} /></div><div className="split"><div>Planned<b className="money">{M.peso(rep.limit)}</b></div><div>Spent in plan<b className="money">{M.peso(rep.spent)}</b></div></div></Card>
         <Card><div className="stat-h muted">Income this month</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(income)}</div><div className="hint" style={{ marginTop: 6 }}>{expected ? `${M.peso(expected)} expected from monthly income` : <>Set up <a href="#/income">monthly income</a> to plan ahead</>}</div></Card>
         <Card><div className="stat-h muted">Left to assign</div><div className={"val money" + (planIncome - rep.limit < 0 ? " exp" : "")} style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(planIncome - rep.limit)}</div><div className="hint" style={{ marginTop: 6 }}>Zero-based: aim for ₱0.00</div></Card>
         <Card><div className="stat-h muted">Spent outside the plan</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(rep.unplannedSpent)}</div><div className="hint" style={{ marginTop: 6 }}>{rep.unplanned.length ? rep.unplanned.map((u: any) => u.category).slice(0, 3).join(", ") : "Everything is budgeted"}</div></Card>
@@ -406,7 +406,7 @@ function Bills({ open }: { open: (m: any) => void }) {
         <Button variant="primary" icon="plus" onClick={() => open({ type: "bill" })}>Add bill</Button>
       </PageHead>
       <div className="grid g-3">
-        <Card className="hero"><div className="label">Still to pay in {M.monthName(month, true)}</div><div className="big money">{M.peso(unpaidTotal)}</div><div className="split"><div>Bills<b>{activeBills.length}</b></div><div>Unpaid<b>{activeBills.filter((b: any) => !paid[b.id]).length}</b></div></div></Card>
+        <Card className="hero"><div className="label">Still to pay in {M.monthName(month, true)}</div><div className="big money"><CountUp cents={unpaidTotal} /></div><div className="split"><div>Bills<b>{activeBills.length}</b></div><div>Unpaid<b>{activeBills.filter((b: any) => !paid[b.id]).length}</b></div></div></Card>
         <Card><div className="stat-h muted">Paid this month</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(paidTotal)}</div><div className="hint" style={{ marginTop: 6 }}>{Object.keys(paid).length} payments recorded</div></Card>
         <Card><div className="stat-h muted">Monthly total</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(M.sumBy(activeBills, "amount_centavos"))}</div><div className="hint" style={{ marginTop: 6 }}>Usual amounts of active bills</div></Card>
       </div>
@@ -468,7 +468,7 @@ function Income({ open }: { open: (m: any) => void }) {
       </PageHead>
       {f.error && <LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} />}
       <div className="grid g-3">
-        <Card className="hero"><div className="label">Expected in {M.monthName(month, true)}</div><div className="big money">{M.peso(plan.expected)}</div>
+        <Card className="hero"><div className="label">Expected in {M.monthName(month, true)}</div><div className="big money"><CountUp cents={plan.expected} /></div>
           <div className="split"><div>Received<b className="money">{M.peso(receivedFromPlan)}</b></div><div>Still to come<b className="money">{M.peso(plan.stillToCome)}</b></div></div></Card>
         <Card><div className="stat-h muted">All income this month</div><div className="val money inc" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(allIncome)}</div><div className="hint" style={{ marginTop: 6 }}>Includes one-off income added as a transaction</div></Card>
         <Card><div className="stat-h muted">Income sources</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{plan.items.length}</div><div className="hint" style={{ marginTop: 6 }}>{plan.pending.length ? `${plan.pending.length} still to arrive this month` : plan.items.length ? "Everything is in for this month" : "Add your salary to get started"}</div></Card>
@@ -522,7 +522,7 @@ function Goals({ open }: { open: (m: any) => void }) {
         <Button variant="primary" icon="plus" onClick={() => open({ type: "goal" })}>New goal</Button>
       </PageHead>
       <div className="grid g-3">
-        <Card className="hero"><div className="label">Saved toward goals</div><div className="big money">{M.peso(totalSaved)}</div><div className="split"><div>Target<b className="money">{M.peso(totalTarget)}</b></div><div>Progress<b>{M.percent(totalSaved, totalTarget)}%</b></div></div></Card>
+        <Card className="hero"><div className="label">Saved toward goals</div><div className="big money"><CountUp cents={totalSaved} /></div><div className="split"><div>Target<b className="money">{M.peso(totalTarget)}</b></div><div>Progress<b>{M.percent(totalSaved, totalTarget)}%</b></div></div></Card>
         <Card><div className="stat-h muted">Active goals</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{goals.length}</div><div className="hint" style={{ marginTop: 6 }}>{archived.length ? `${archived.length} archived` : "Keep it to a few that matter"}</div></Card>
         <Card><div className="stat-h muted">Added in the last 30 days</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(M.sumBy(f.contributions.filter((c: Contribution) => c.happened_on > M.addDays(today, -30)), "amount_centavos"))}</div><div className="hint" style={{ marginTop: 6 }}>Across all goals</div></Card>
       </div>
