@@ -70,9 +70,10 @@ textarea.input{padding:10px 12px;min-height:80px;resize:vertical}
 .error-text{font-size:12px;color:var(--danger)}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .form-grid .full{grid-column:1/-1}
-.seg{display:inline-flex;padding:3px;gap:2px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
-.seg button{border:0;background:transparent;padding:6px 12px;border-radius:8px;font-weight:600;font-size:12.5px;color:var(--muted);cursor:pointer;min-height:30px}
-.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.seg{position:relative;display:inline-flex;padding:3px;gap:2px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
+.seg button{position:relative;z-index:1;border:0;background:transparent;padding:6px 12px;border-radius:8px;font-weight:600;font-size:12.5px;color:var(--muted);cursor:pointer;min-height:30px;transition:color .2s}
+.seg button[aria-pressed="true"]{color:var(--ink)}
+.seg .pill{border-radius:8px}
 .seg.full{display:flex}.seg.full button{flex:1}
 .check{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer}
 .check input{width:16px;height:16px;accent-color:var(--accent)}
@@ -84,11 +85,11 @@ textarea.input{padding:10px 12px;min-height:80px;resize:vertical}
 .brand-mark{width:36px;height:36px;border-radius:10px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex:none}
 .brand b{display:block;font-size:17px;letter-spacing:-.02em}
 .brand small{display:block;font-size:10px;font-weight:700;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
-.nav{display:flex;flex-direction:column;gap:2px}
+.nav{position:relative;display:flex;flex-direction:column;gap:2px}
 .nav-label{font-size:10.5px;font-weight:700;letter-spacing:.1em;color:var(--faint);text-transform:uppercase;padding:0 10px;margin:6px 0 4px}
-.nav a{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px;position:relative;transition:background-color .15s,color .15s}
-.nav a svg{color:var(--muted);flex:none}
-.nav a[aria-current="page"]{background:var(--surface);color:var(--accent);box-shadow:var(--shadow)}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-weight:600;font-size:13.5px;position:relative;z-index:1;white-space:nowrap;transition:background-color .15s,color .2s}
+.nav a svg{color:var(--muted);flex:none;transition:color .2s}
+.nav a[aria-current="page"]{color:var(--accent)}
 .nav a[aria-current="page"] svg{color:var(--accent)}
 .nav a .badge{margin-left:auto}
 @media (hover:hover) and (pointer:fine){.nav a:not([aria-current="page"]):hover{background:color-mix(in srgb,var(--surface) 60%,transparent)}}
@@ -249,6 +250,47 @@ table.t .row-actions{display:flex;gap:4px;justify-content:flex-end}
 .divider{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:12px}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 
+/* ── Motion ── */
+/* The sliding highlight behind the active menu item or tab */
+.pill{position:absolute;top:0;left:0;z-index:0;border-radius:10px;background:var(--surface);box-shadow:var(--shadow);pointer-events:none}
+.pill.glide{transition:transform .38s var(--ease),width .38s var(--ease),height .38s var(--ease)}
+/* Collapsible sidebar (wide screens only) */
+.app{transition:grid-template-columns .32s var(--ease)}
+.lbl{transition:opacity .2s}
+@media (min-width:901px){
+  .app.collapsed{grid-template-columns:76px minmax(0,1fr)}
+  .app.collapsed .sidebar{padding-left:12px;padding-right:12px}
+  .app.collapsed .lbl,.app.collapsed .nav-label,.app.collapsed .side-card,.app.collapsed .side-accounts,.app.collapsed .user-row .who,.app.collapsed .user-row .btn{opacity:0;pointer-events:none;position:absolute;width:0;overflow:hidden}
+  .app.collapsed .brand{justify-content:center;padding:0}
+  .app.collapsed .nav a{justify-content:center;padding:10px 0}
+  .app.collapsed .nav a .badge{position:absolute;top:2px;right:4px;min-width:16px;height:16px;font-size:10px;padding:0 4px}
+  .app.collapsed .user-row{justify-content:center;padding:6px;border-color:transparent;background:transparent}
+}
+.collapse-toggle{display:none!important}
+@media (min-width:901px){.collapse-toggle{display:flex!important}}
+/* Page entrance: the page's sections and their cards rise in, one after another */
+@keyframes riseIn{from{opacity:0;transform:translateY(10px);filter:blur(4px)}to{opacity:1;transform:none;filter:none}}
+.page>*:not(.modal-bg){animation:riseIn .45s var(--ease) both}
+.page>*:nth-child(2){animation-delay:.05s}.page>*:nth-child(3){animation-delay:.1s}.page>*:nth-child(4){animation-delay:.15s}.page>*:nth-child(n+5){animation-delay:.2s}
+.grid>*{animation:riseIn .45s var(--ease) both}
+.grid>*:nth-child(2){animation-delay:.06s}.grid>*:nth-child(3){animation-delay:.12s}.grid>*:nth-child(4){animation-delay:.18s}.grid>*:nth-child(n+5){animation-delay:.22s}
+/* Charts and progress draw in */
+@keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.chart .draw{stroke-dasharray:1;stroke-dashoffset:0;animation:draw .9s var(--ease) .1s both}
+.chart .draw.slow{animation-duration:1.1s;animation-delay:.25s}
+@keyframes fadeIn{from{opacity:0}}
+.chart .fade-in{animation:fadeIn .8s ease .35s both}
+@keyframes popIn{from{opacity:0;transform:scale(.3)}}
+.chart .pop-in{transform-box:fill-box;transform-origin:center;animation:popIn .3s var(--ease) .8s both}
+@keyframes growUp{from{transform:scaleY(0)}}
+.chart .grow-up{transform-box:fill-box;transform-origin:bottom;animation:growUp .6s var(--ease) both}
+@keyframes spinIn{from{opacity:0;transform:rotate(-120deg)}}
+.spin-in{transform-origin:70px 70px;animation:spinIn .8s var(--ease) .1s both}
+@keyframes barIn{from{transform:scaleX(0)}}
+.bar i{animation:barIn .7s var(--ease) .15s both}
+@keyframes segIn{from{opacity:0;transform:scaleY(.3)}}
+.segs i.on{animation:segIn .3s var(--ease) both;animation-delay:calc(var(--i) * 25ms + .15s)}
+
 /* ── Responsive ── */
 @media (max-width:1180px){
   .g-stats{grid-template-columns:1fr 1fr}
@@ -286,4 +328,4 @@ table.t .row-actions{display:flex;gap:4px;justify-content:flex-end}
   .li.sched .amt{min-width:0!important}
   .li.sched .row-actions{margin-left:auto}
 }
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important}}
