@@ -33,6 +33,7 @@ _Last updated: 2026-11-23._
 | Financial calendar | Not started | |
 | AI assistant | Not started | Must explain numbers from `src/money.js` and the database, never compute its own. |
 | Settings | Done | Theme (system/light/dark), categories, account and sign out. |
+| Motion | Done | Sliding highlight on the menu and on tab switches (`useIndicator` + `Pill` in `src/ui.tsx`). Collapsible icon-only sidebar on wide screens (remembered per device). Page sections and cards rise in one after another. Headline numbers count up once on first view (`CountUp`). Charts draw in: bars grow, lines draw, the donut turns in, and progress bars fill. Everything stays under about a second, and all of it turns off when the device is set to reduce motion. |
 
 ## Architecture (as built)
 
