@@ -18,7 +18,7 @@ function LoadError({ msg, onRetry }: { msg: string; onRetry: () => void }) {
   return <div className="alert" role="alert"><Icon name="alert" /><span className="grow">Couldn't load your data: {msg}</span><Button size="sm" onClick={onRetry}>Try again</Button></div>;
 }
 
-/* ── Dashboard ────────────────────────────────────────────────────────────────── */
+/* ── Dashboard ── */
 function Dashboard({ open }: { open: (m: any) => void }) {
   const f = useFinance();
   const [month, setMonth] = useState(f.thisMonth);
@@ -33,6 +33,8 @@ function Dashboard({ open }: { open: (m: any) => void }) {
   const paid = f.paidFor(month);
   const paidIds: Record<string, boolean> = {}; Object.keys(paid).forEach((k) => (paidIds[k] = true));
   const unpaid = M.unpaidBills(f.bills, paidIds, month);
+  const billCount = f.bills.filter((b: Bill) => !M.isIncomeItem(b)).length;
+  const incPlan = M.incomePlan(f.bills, paidIds, month);
   const safe = M.safeToSpend(f.accounts, f.bills, paidIds, month);
   const balanceLine = useMemo(() => M.dailyBalanceSeries(totals.netWorth, f.txs, today, 30).map((x: any) => x.cents), [f.txs, totals.netWorth]);
   const budget = M.budgetReport(f.budgets.filter((b: Budget) => b.month === month), f.txs, month);
@@ -62,7 +64,7 @@ function Dashboard({ open }: { open: (m: any) => void }) {
       <div className="grid g-stats">
         <Card className="hero">
           <div className="label">Total balance</div>
-          <div className="big money">{M.peso(totals.netWorth)}<small>PHP</small></div>
+          <div className="big money"><CountUp cents={totals.netWorth} /><small>PHP</small></div>
           <div className="spark"><Sparkline values={balanceLine} color="#7fe0b7" height={44} /></div>
           <div className="split">
             <div>Safe to spend<b className="money">{M.peso(safe)}</b></div>
@@ -70,7 +72,8 @@ function Dashboard({ open }: { open: (m: any) => void }) {
             {totals.debts > 0 && <div>Owed on cards<b className="money">{M.peso(totals.debts)}</b></div>}
           </div>
         </Card>
-        <StatCard icon="arrow-in" tone="var(--income)" label="Income" value={sum.income} sub={`${monthTx.filter((t: Tx) => t.kind === "income" && !t.voided_at).length} entries in ${M.monthName(month, true)}`} line={series.map((s: any) => s.income)} />
+        <StatCard icon="arrow-in" tone="var(--income)" label="Income" value={sum.income}
+          sub={incPlan.expected ? (incPlan.stillToCome ? `${M.pesoShort(incPlan.stillToCome)} more expected this month` : `All ${M.pesoShort(incPlan.expected)} of monthly income is in`) : `${monthTx.filter((t: Tx) => t.kind === "income" && !t.voided_at).length} entries in ${M.monthName(month, true)}`} line={series.map((s: any) => s.income)} />
         <StatCard icon="arrow-out" tone="var(--spend)" label="Spending" value={sum.spending}
           sub={budget.limit ? `${M.percent(budget.spent, budget.limit)}% of ${M.pesoShort(budget.limit)} budget` : "No budget set for this month"} line={series.map((s: any) => s.spending)} />
         <StatCard icon="piggy" tone="var(--net)" label="Net saved" value={sum.net} sub={sum.income ? `${M.percent(sum.net, sum.income)}% of income` : "Income minus spending"} line={series.map((s: any) => s.net)} />
@@ -80,7 +83,7 @@ function Dashboard({ open }: { open: (m: any) => void }) {
         <Card className="span-2" title="Cash flow" subtitle="Monthly income, spending and net saved"
           action={<Seg label="Range" value={range} onChange={setRange} options={[["3", "3M"], ["6", "6M"], ["12", "1Y"]]} />}>
           <div className="legend" style={{ marginBottom: 8 }}><span><i style={{ background: "var(--income)" }} />Income</span><span><i style={{ background: "var(--spend)" }} />Spending</span><span><i style={{ background: "var(--net)", borderRadius: 99 }} />Net saved</span></div>
-          <CashflowChart series={chart} />
+          <CashflowChart key={range + month} series={chart} />
           <div className="totals-row"><div>Average income<b className="money">{M.peso(avg("income"))}</b></div><div>Average spending<b className="money">{M.peso(avg("spending"))}</b></div><div>{M.monthName(month, true)} savings rate<b>{sum.income ? M.percent(sum.net, sum.income) + "%" : "—"}</b></div></div>
         </Card>
         <Card title="Spending plan" subtitle={`${M.monthName(month)} budget`} action={budget.limit ? <span className={"chip" + (budget.spent > budget.limit ? " danger" : "")}>{M.percent(budget.spent, budget.limit)}% used</span> : undefined}>
@@ -145,7 +148,7 @@ function Dashboard({ open }: { open: (m: any) => void }) {
               </div>
               <div className="totals-row" style={{ justifyContent: "space-between" }}><div>{unpaid.length} {unpaid.length === 1 ? "payment" : "payments"} due</div><div style={{ textAlign: "right" }}>Total due<b className="money">{M.peso(M.sumBy(unpaid, "amount_centavos"))}</b></div></div>
             </>
-          ) : <Empty icon="bills" title={f.bills.length ? "All paid for this month" : "No bills yet"} text={f.bills.length ? "Nothing left to pay. Nice." : "Add rent, utilities and subscriptions so nothing sneaks up on you."} action={!f.bills.length ? <Button size="sm" onClick={() => open({ type: "bill" })}>Add a bill</Button> : undefined} />}
+          ) : <Empty icon="bills" title={billCount ? "All paid for this month" : "No bills yet"} text={billCount ? "Nothing left to pay. Nice." : "Add rent, utilities and subscriptions so nothing sneaks up on you."} action={!billCount ? <Button size="sm" onClick={() => open({ type: "bill" })}>Add a bill</Button> : undefined} />}
         </Card>
         <Card title="Where your money went" subtitle={`Spending by category, ${M.monthName(month, true)}`}>
           {cats.length ? <Donut data={donut} total={sum.spending} label={`Spending by category in ${M.monthName(month)}`} /> : <Empty icon="budget" title="No spending yet" text="Your categories will show up here once you record expenses." />}
@@ -158,14 +161,14 @@ function StatCard({ icon, tone, label, value, sub, line }: { icon: string; tone:
   return (
     <section className="card stat">
       <div className="stat-h"><span className="stat-ic" style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}><Icon name={icon} size={16} /></span>{label}</div>
-      <div className="val money">{M.peso(value)}</div>
+      <div className="val money"><CountUp cents={value} /></div>
       <div className="spark"><Sparkline values={line} color={tone} height={34} fill={false} /></div>
       <div className="sub">{sub}</div>
     </section>
   );
 }
 
-/* ── Transactions ──────────────────────────────────────────────────────────────── */
+/* ── Transactions ── */
 function Transactions({ open, params }: { open: (m: any) => void; params: Record<string, string> }) {
   const f = useFinance(), toast = useToast();
   const [month, setMonth] = useState(f.thisMonth);
@@ -252,13 +255,13 @@ function Transactions({ open, params }: { open: (m: any) => void; params: Record
         )}
       </Card>
       {confirm && <Confirm title="Void this transaction?" confirmLabel="Void it" onClose={() => setConfirm(null)}
-        text={<>It stays in your history but stops counting toward balances and totals.{f.payments.some((p: BillPayment) => p.transaction_id === confirm.id) ? " This was a bill payment, so the bill goes back to unpaid." : ""} You can restore it from "Show voided".</>}
+        text={<>It stays in your history but stops counting toward balances and totals.{f.payments.some((p: BillPayment) => p.transaction_id === confirm.id) ? (confirm.kind === "income" ? " This came from your monthly income, so it goes back to expected." : " This was a bill payment, so the bill goes back to unpaid.") : ""} You can restore it from "Show voided".</>}
         onConfirm={async () => { await f.api.voidTx(confirm); toast("Transaction voided."); }} />}
     </div>
   );
 }
 
-/* ── Accounts ───────────────────────────────────────────────────────────────── */
+/* ── Accounts ── */
 function Accounts({ open }: { open: (m: any) => void }) {
   const f = useFinance(), toast = useToast();
   const totals = M.accountTotals(f.accounts);
@@ -287,7 +290,7 @@ function Accounts({ open }: { open: (m: any) => void }) {
       </PageHead>
       {f.error && <LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} />}
       <div className="grid g-stats">
-        <Card className="hero"><div className="label">Net worth</div><div className="big money">{M.peso(totals.netWorth)}</div><div className="split"><div>Assets<b className="money">{M.peso(totals.assets)}</b></div><div>Debts<b className="money">{M.peso(totals.debts)}</b></div></div></Card>
+        <Card className="hero"><div className="label">Net worth</div><div className="big money"><CountUp cents={totals.netWorth} /></div><div className="split"><div>Assets<b className="money">{M.peso(totals.assets)}</b></div><div>Debts<b className="money">{M.peso(totals.debts)}</b></div></div></Card>
         <Card><div className="stat-h muted">Spendable now</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(totals.spendable)}</div><div className="hint" style={{ marginTop: 6 }}>Cash, bank, savings and e-wallets</div></Card>
         <Card><div className="stat-h muted">Owed on credit cards</div><div className="val money exp" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(-M.sumBy(f.live.filter((a: Account) => a.type === "credit" && a.balance < 0), "balance"))}</div><div className="hint" style={{ marginTop: 6 }}>Pay it down with a transfer</div></Card>
         <Card><div className="stat-h muted">Accounts</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{f.live.length}</div><div className="hint" style={{ marginTop: 6 }}>{archived.length ? `${archived.length} archived` : "All active"}</div></Card>
@@ -308,13 +311,16 @@ function Accounts({ open }: { open: (m: any) => void }) {
   );
 }
 
-/* ── Budgets ────────────────────────────────────────────────────────────────── */
+/* ── Budgets ── */
 function Budgets() {
   const f = useFinance(), toast = useToast();
   const [month, setMonth] = useState(f.thisMonth);
   const monthBudgets = f.budgets.filter((b: Budget) => b.month === month);
   const rep = M.budgetReport(monthBudgets, f.txs, month);
   const income = M.summarize(M.inMonth(f.txs, month)).income;
+  // Zero-based budgeting plans with the month's expected income, even before payday.
+  const expected = M.incomePlan(f.bills, {}, month).expected;
+  const planIncome = Math.max(income, expected);
   const expenseCats: Category[] = f.categories.filter((c: Category) => c.kind === "expense");
   const prev = M.shiftMonth(month, -1);
   const prevCount = f.budgets.filter((b: Budget) => b.month === prev).length;
@@ -343,9 +349,9 @@ function Budgets() {
         <Button icon="undo" disabled={!prevCount} title={prevCount ? undefined : "Last month has no budget"} onClick={async () => { try { await f.api.copyBudgets(prev, month); toast(`Copied ${M.monthName(prev)}'s budget.`); } catch (e) { toast(friendlyError(e), true); } }}>Copy last month</Button>
       </PageHead>
       <div className="grid g-stats">
-        <Card className="hero"><div className="label">Left to spend</div><div className="big money">{M.peso(rep.limit - rep.spent)}</div><div className="split"><div>Planned<b className="money">{M.peso(rep.limit)}</b></div><div>Spent in plan<b className="money">{M.peso(rep.spent)}</b></div></div></Card>
-        <Card><div className="stat-h muted">Income this month</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(income)}</div><div className="hint" style={{ marginTop: 6 }}>Money you can give a job</div></Card>
-        <Card><div className="stat-h muted">Left to assign</div><div className={"val money" + (income - rep.limit < 0 ? " exp" : "")} style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(income - rep.limit)}</div><div className="hint" style={{ marginTop: 6 }}>Zero-based: aim for ₱0.00</div></Card>
+        <Card className="hero"><div className="label">Left to spend</div><div className="big money"><CountUp cents={rep.limit - rep.spent} /></div><div className="split"><div>Planned<b className="money">{M.peso(rep.limit)}</b></div><div>Spent in plan<b className="money">{M.peso(rep.spent)}</b></div></div></Card>
+        <Card><div className="stat-h muted">Income this month</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(income)}</div><div className="hint" style={{ marginTop: 6 }}>{expected ? `${M.peso(expected)} expected from monthly income` : <>Set up <a href="#/income">monthly income</a> to plan ahead</>}</div></Card>
+        <Card><div className="stat-h muted">Left to assign</div><div className={"val money" + (planIncome - rep.limit < 0 ? " exp" : "")} style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(planIncome - rep.limit)}</div><div className="hint" style={{ marginTop: 6 }}>Zero-based: aim for ₱0.00</div></Card>
         <Card><div className="stat-h muted">Spent outside the plan</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(rep.unplannedSpent)}</div><div className="hint" style={{ marginTop: 6 }}>{rep.unplanned.length ? rep.unplanned.map((u: any) => u.category).slice(0, 3).join(", ") : "Everything is budgeted"}</div></Card>
       </div>
       <Card title={`Category limits for ${M.monthName(month)}`} subtitle="Type a limit and press Enter, or leave it empty for no budget.">
@@ -378,13 +384,15 @@ function Budgets() {
   );
 }
 
-/* ── Bills ──────────────────────────────────────────────────────────────────── */
+/* ── Bills ── */
 function Bills({ open }: { open: (m: any) => void }) {
   const f = useFinance(), toast = useToast();
   const [month, setMonth] = useState(f.thisMonth);
   const today = M.today();
-  const paid = f.paidFor(month);
-  const list = f.bills.map((b: Bill) => ({ ...b, due: M.dueDate(month, b.due_day), st: b.active ? M.billStatus(b, !!paid[b.id], month, today) : "inactive" }))
+  const bills: Bill[] = f.bills.filter((b: Bill) => !M.isIncomeItem(b));
+  const allPaid = f.paidFor(month), paid: Record<string, BillPayment> = {};
+  bills.forEach((b) => { if (allPaid[b.id]) paid[b.id] = allPaid[b.id]; });
+  const list = bills.map((b: Bill) => ({ ...b, due: M.dueDate(month, b.due_day), st: b.active ? M.billStatus(b, !!paid[b.id], month, today) : "inactive" }))
     .sort((a: any, b: any) => (a.st === "inactive" ? 1 : 0) - (b.st === "inactive" ? 1 : 0) || a.due.localeCompare(b.due));
   const activeBills = list.filter((b: any) => b.active);
   const unpaidTotal = M.sumBy(activeBills.filter((b: any) => !paid[b.id]), "amount_centavos");
@@ -398,7 +406,7 @@ function Bills({ open }: { open: (m: any) => void }) {
         <Button variant="primary" icon="plus" onClick={() => open({ type: "bill" })}>Add bill</Button>
       </PageHead>
       <div className="grid g-3">
-        <Card className="hero"><div className="label">Still to pay in {M.monthName(month, true)}</div><div className="big money">{M.peso(unpaidTotal)}</div><div className="split"><div>Bills<b>{activeBills.length}</b></div><div>Unpaid<b>{activeBills.filter((b: any) => !paid[b.id]).length}</b></div></div></Card>
+        <Card className="hero"><div className="label">Still to pay in {M.monthName(month, true)}</div><div className="big money"><CountUp cents={unpaidTotal} /></div><div className="split"><div>Bills<b>{activeBills.length}</b></div><div>Unpaid<b>{activeBills.filter((b: any) => !paid[b.id]).length}</b></div></div></Card>
         <Card><div className="stat-h muted">Paid this month</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(paidTotal)}</div><div className="hint" style={{ marginTop: 6 }}>{Object.keys(paid).length} payments recorded</div></Card>
         <Card><div className="stat-h muted">Monthly total</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(M.sumBy(activeBills, "amount_centavos"))}</div><div className="hint" style={{ marginTop: 6 }}>Usual amounts of active bills</div></Card>
       </div>
@@ -407,7 +415,7 @@ function Bills({ open }: { open: (m: any) => void }) {
           : list.length ? (
             <ul className="list">
               {list.map((b: any) => (
-                <li className="li" key={b.id}>
+                <li className="li sched" key={b.id}>
                   <div className="date-chip"><b>{b.due.slice(8)}</b><small>{M.monthName(month, true)}</small></div>
                   <div className="m"><b>{b.name}</b><small>{b.category} · {b.account_id ? f.acctName(b.account_id) : "No default account"}{paid[b.id] ? ` · paid ${M.dayLabel(paid[b.id].paid_on)}` : ""}</small></div>
                   <span className={"chip " + label[b.st][1]}>{label[b.st][0]}</span>
@@ -434,7 +442,71 @@ function Bills({ open }: { open: (m: any) => void }) {
   );
 }
 
-/* ── Goals ──────────────────────────────────────────────────────────────────── */
+/* ── Monthly income ── */
+// Monthly income: salary and other money that arrives every month. Each month you mark it received,
+// which records an income transaction (same atomic pay_bill call that bills use).
+function Income({ open }: { open: (m: any) => void }) {
+  const f = useFinance(), toast = useToast();
+  const [month, setMonth] = useState(f.thisMonth);
+  const today = M.today();
+  const sources: Bill[] = f.bills.filter((b: Bill) => M.isIncomeItem(b));
+  const allPaid = f.paidFor(month), got: Record<string, BillPayment> = {};
+  sources.forEach((b) => { if (allPaid[b.id]) got[b.id] = allPaid[b.id]; });
+  const gotIds: Record<string, boolean> = {}; Object.keys(got).forEach((k) => (gotIds[k] = true));
+  const plan = M.incomePlan(sources, gotIds, month);
+  const receivedFromPlan = Object.values(got).reduce((s: number, p: any) => s + (f.txs.find((t: Tx) => t.id === p.transaction_id)?.cents || 0), 0);
+  const allIncome = M.summarize(M.inMonth(f.txs, month)).income;
+  const list = sources.map((b) => ({ ...b, due: M.dueDate(month, b.due_day), st: !b.active ? "inactive" : M.billStatus(b, !!got[b.id], month, today) }))
+    .sort((a: any, b: any) => (a.st === "inactive" ? 1 : 0) - (b.st === "inactive" ? 1 : 0) || a.due.localeCompare(b.due));
+  const label: Record<string, [string, string]> = { paid: ["Received", ""], overdue: ["Not in yet", "warn"], "due-soon": ["Coming soon", "neutral"], upcoming: ["Expected", "neutral"], inactive: ["Paused", "neutral"] };
+  const [confirm, setConfirm] = useState<any>(null);
+  return (
+    <div className="page">
+      <PageHead eyebrow="Income" title="Monthly income" sub="Set up your salary and other regular income once. Each month, mark it received when it arrives.">
+        <MonthPicker month={month} onChange={setMonth} />
+        <Button variant="primary" icon="plus" onClick={() => open({ type: "bill", kind: "income" })}>Add monthly income</Button>
+      </PageHead>
+      {f.error && <LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} />}
+      <div className="grid g-3">
+        <Card className="hero"><div className="label">Expected in {M.monthName(month, true)}</div><div className="big money"><CountUp cents={plan.expected} /></div>
+          <div className="split"><div>Received<b className="money">{M.peso(receivedFromPlan)}</b></div><div>Still to come<b className="money">{M.peso(plan.stillToCome)}</b></div></div></Card>
+        <Card><div className="stat-h muted">All income this month</div><div className="val money inc" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(allIncome)}</div><div className="hint" style={{ marginTop: 6 }}>Includes one-off income added as a transaction</div></Card>
+        <Card><div className="stat-h muted">Income sources</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{plan.items.length}</div><div className="hint" style={{ marginTop: 6 }}>{plan.pending.length ? `${plan.pending.length} still to arrive this month` : plan.items.length ? "Everything is in for this month" : "Add your salary to get started"}</div></Card>
+      </div>
+      <Card title={`Income for ${M.monthName(month)}`} subtitle="One-off income, like a bonus or a sale, goes in as a regular transaction.">
+        {f.status === "loading" ? <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{[0, 1, 2].map((i) => <Skeleton key={i} h={48} />)}</div>
+          : list.length ? (
+            <ul className="list">
+              {list.map((b: any) => (
+                <li className="li sched" key={b.id}>
+                  <div className="date-chip"><b>{b.due.slice(8)}</b><small>{M.monthName(month, true)}</small></div>
+                  <div className="m"><b>{b.name}</b><small>{b.category} · {b.account_id ? f.acctName(b.account_id) : "No default account"}{got[b.id] ? ` · received ${M.dayLabel(got[b.id].paid_on)}` : ""}</small></div>
+                  <span className={"chip " + label[b.st][1]}>{label[b.st][0]}</span>
+                  <span className="amt money inc" style={{ minWidth: 96, textAlign: "right" }}>+{M.peso(b.amount_centavos)}</span>
+                  <div className="row-actions" style={{ display: "flex", gap: 4 }}>
+                    {b.active && (got[b.id]
+                      ? <Button size="sm" icon="undo" onClick={() => setConfirm({ kind: "undo", b })}>Undo</Button>
+                      : <Button size="sm" variant="primary" icon="check" onClick={() => open({ type: "pay", bill: b, month })}>Received</Button>)}
+                    <Button size="sm" variant="ghost" iconOnly icon="pencil" label={`Edit ${b.name}`} onClick={() => open({ type: "bill", bill: b })} />
+                    <Button size="sm" variant="ghost" iconOnly icon="trash" label={`Delete ${b.name}`} onClick={() => setConfirm({ kind: "delete", b })} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : <Empty icon="arrow-in" title="No monthly income yet" text="Add your salary, allowance or any money you get every month. Paid on the 15th and 30th? Add it as two entries."
+              action={<Button variant="primary" icon="plus" onClick={() => open({ type: "bill", kind: "income" })}>Add monthly income</Button>} />}
+      </Card>
+      {confirm?.kind === "undo" && <Confirm title={`Undo ${confirm.b.name}?`} confirmLabel="Undo" onClose={() => setConfirm(null)}
+        text={`It goes back to expected for ${M.monthName(month)}, and its income entry is voided (kept in history, not counted).`}
+        onConfirm={async () => { await f.api.unpayBill(confirm.b.id, month); toast("Marked as not received."); }} />}
+      {confirm?.kind === "delete" && <Confirm title={`Delete ${confirm.b.name}?`} confirmLabel="Delete" onClose={() => setConfirm(null)}
+        text="This monthly income is removed. Income you already received stays in your transactions."
+        onConfirm={async () => { await f.api.deleteBill(confirm.b.id); toast("Monthly income deleted."); }} />}
+    </div>
+  );
+}
+
+/* ── Goals ── */
 function Goals({ open }: { open: (m: any) => void }) {
   const f = useFinance(), toast = useToast();
   const today = M.today();
@@ -450,7 +522,7 @@ function Goals({ open }: { open: (m: any) => void }) {
         <Button variant="primary" icon="plus" onClick={() => open({ type: "goal" })}>New goal</Button>
       </PageHead>
       <div className="grid g-3">
-        <Card className="hero"><div className="label">Saved toward goals</div><div className="big money">{M.peso(totalSaved)}</div><div className="split"><div>Target<b className="money">{M.peso(totalTarget)}</b></div><div>Progress<b>{M.percent(totalSaved, totalTarget)}%</b></div></div></Card>
+        <Card className="hero"><div className="label">Saved toward goals</div><div className="big money"><CountUp cents={totalSaved} /></div><div className="split"><div>Target<b className="money">{M.peso(totalTarget)}</b></div><div>Progress<b>{M.percent(totalSaved, totalTarget)}%</b></div></div></Card>
         <Card><div className="stat-h muted">Active goals</div><div className="val" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{goals.length}</div><div className="hint" style={{ marginTop: 6 }}>{archived.length ? `${archived.length} archived` : "Keep it to a few that matter"}</div></Card>
         <Card><div className="stat-h muted">Added in the last 30 days</div><div className="val money" style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>{M.peso(M.sumBy(f.contributions.filter((c: Contribution) => c.happened_on > M.addDays(today, -30)), "amount_centavos"))}</div><div className="hint" style={{ marginTop: 6 }}>Across all goals</div></Card>
       </div>
@@ -490,7 +562,7 @@ function Goals({ open }: { open: (m: any) => void }) {
   );
 }
 
-/* ── Settings ────────────────────────────────────────────────────────────────── */
+/* ── Settings ── */
 function Settings({ user, theme, setTheme }: { user: any; theme: string; setTheme: (t: string) => void }) {
   const f = useFinance(), toast = useToast();
   const [name, setName] = useState({ expense: "", income: "" } as Record<string, string>);

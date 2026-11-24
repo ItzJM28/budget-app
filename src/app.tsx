@@ -1,6 +1,6 @@
 // PeraFlow app shell: sign-in, sidebar navigation, theme, routing and dialogs.
 
-/* ── Theme (light, dark or follow the device) ─────────────────────────── */
+/* ── Theme (light, dark or follow the device) ── */
 function readTheme() { try { return localStorage.getItem("pf-theme") || "system"; } catch { return "system"; } }
 function applyTheme(t: string) {
   const dark = t === "dark" || (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -19,11 +19,12 @@ function useTheme() {
   return [theme, setTheme] as const;
 }
 
-/* ── Routing: #/page?key=value ──────────────────────────────────────── */
+/* ── Routing: #/page?key=value ── */
 const PAGES = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "transactions", label: "Transactions", icon: "transactions" },
   { id: "accounts", label: "Accounts", icon: "wallet" },
+  { id: "income", label: "Monthly income", icon: "arrow-in" },
   { id: "budgets", label: "Budgets", icon: "budget" },
   { id: "bills", label: "Bills", icon: "bills" },
   { id: "goals", label: "Savings goals", icon: "goal" },
@@ -45,7 +46,7 @@ function useRoute() {
   return r;
 }
 
-/* ── Sign in ──────────────────────────────────────────────────────────── */
+/* ── Sign in ── */
 function Auth() {
   const [mode, setMode] = useState("in");
   const [email, setEmail] = useState("");
@@ -106,13 +107,13 @@ function Auth() {
   );
 }
 
-/* ── Dialog host: one place that opens every form ─────────────────────── */
+/* ── Dialog host: one place that opens every form ── */
 function Dialogs({ modal, close }: { modal: any; close: () => void }) {
   if (!modal) return null;
   switch (modal.type) {
     case "tx": return <TxForm tx={modal.tx} preset={modal.preset} onClose={close} />;
     case "account": return <AccountForm account={modal.account} onClose={close} />;
-    case "bill": return <BillForm bill={modal.bill} onClose={close} />;
+    case "bill": return <BillForm bill={modal.bill} kind={modal.kind} onClose={close} />;
     case "pay": return <PayBillForm bill={modal.bill} month={modal.month} onClose={close} />;
     case "goal": return <GoalForm goal={modal.goal} onClose={close} />;
     case "contribute": return <ContributeForm goal={modal.goal} saved={modal.saved} withdraw={modal.withdraw} onClose={close} />;
@@ -120,7 +121,7 @@ function Dialogs({ modal, close }: { modal: any; close: () => void }) {
   }
 }
 
-/* ── Signed-in layout ───────────────────────────────────────────────── */
+/* ── Signed-in layout ── */
 function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: (t: string) => void }) {
   const f = useFinance();
   const { page, params } = useRoute();
@@ -130,20 +131,27 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
   useEffect(() => { document.title = (page === "dashboard" ? "" : (PAGES.find((p) => p.id === page)?.label || "Settings") + " · ") + "PeraFlow"; }, [page]);
   const paid = f.paidFor(f.thisMonth);
   const today = M.today();
-  const dueSoon = f.bills.filter((b: Bill) => b.active && !paid[b.id] && ["overdue", "due-soon"].includes(M.billStatus(b, false, f.thisMonth, today))).length;
+  const dueSoon = f.bills.filter((b: Bill) => !M.isIncomeItem(b) && b.active && !paid[b.id] && ["overdue", "due-soon"].includes(M.billStatus(b, false, f.thisMonth, today))).length;
   const budget = M.budgetReport(f.budgets.filter((b: Budget) => b.month === f.thisMonth), f.txs, f.thisMonth);
   const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const open = (m: any) => setModal(m);
+  // Collapsed sidebar (icons only) on wide screens; remembered on this device.
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("pf-side") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("pf-side", collapsed ? "1" : "0"); } catch {} }, [collapsed]);
+  // Sliding highlights for the main menu and the Settings link. They re-measure when the page or the sidebar width changes.
+  const [mainNav, mainBox] = useIndicator(page + collapsed);
+  const [footNav, footBox] = useIndicator(page + collapsed);
   const nav = (p: { id: string; label: string; icon: string }) => (
-    <a key={p.id} href={"#/" + p.id} aria-current={page === p.id ? "page" : undefined}>
-      <Icon name={p.icon} />{p.label}{p.id === "bills" && dueSoon > 0 && <span className="badge" title="Due within 7 days or overdue">{dueSoon}</span>}
+    <a key={p.id} href={"#/" + p.id} aria-current={page === p.id ? "page" : undefined} title={collapsed ? p.label : undefined}>
+      <Icon name={p.icon} /><span className="lbl">{p.label}</span>{p.id === "bills" && dueSoon > 0 && <span className="badge" title="Due within 7 days or overdue">{dueSoon}</span>}
     </a>
   );
   return (
-    <div className="app">
+    <div className={"app" + (collapsed ? " collapsed" : "")}>
       <aside className={"sidebar" + (menu ? " open" : "")} aria-label="Main navigation">
-        <div className="brand"><BrandMark /><div><b>PeraFlow</b><small>Personal finance</small></div></div>
-        <nav className="nav">
+        <div className="brand"><BrandMark /><div className="lbl"><b>PeraFlow</b><small>Personal finance</small></div></div>
+        <nav className="nav" ref={mainNav as any}>
+          <Pill box={mainBox} />
           <div className="nav-label">Workspace</div>
           {PAGES.map(nav)}
         </nav>
@@ -156,7 +164,7 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
           </div>
         )}
         {f.live.length > 0 && (
-          <nav className="nav" aria-label="Accounts">
+          <nav className="nav side-accounts" aria-label="Accounts">
             <div className="nav-label">Accounts</div>
             {f.live.slice(0, 4).map((a: Account) => (
               <a key={a.id} href={`#/transactions?account=${a.id}`}><AcctIcon type={a.type} /><span style={{ minWidth: 0, flex: 1 }}><span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span><small className="money muted" style={{ fontWeight: 500 }}>{M.peso(a.balance)}</small></span></a>
@@ -164,11 +172,15 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
           </nav>
         )}
         <div className="side-foot">
-          <nav className="nav">
-            <a href="#/settings" aria-current={page === "settings" ? "page" : undefined}><Icon name="settings" />Settings</a>
-            <a href="#" onClick={(e) => { e.preventDefault(); setTheme(dark ? "light" : "dark"); }}><Icon name={dark ? "sun" : "moon"} />{dark ? "Light mode" : "Dark mode"}</a>
+          <nav className="nav" ref={footNav as any}>
+            <Pill box={footBox} />
+            <a href="#/settings" aria-current={page === "settings" ? "page" : undefined} title={collapsed ? "Settings" : undefined}><Icon name="settings" /><span className="lbl">Settings</span></a>
+            <a href="#" title={collapsed ? (dark ? "Light mode" : "Dark mode") : undefined} onClick={(e) => { e.preventDefault(); setTheme(dark ? "light" : "dark"); }}><Icon name={dark ? "sun" : "moon"} /><span className="lbl">{dark ? "Light mode" : "Dark mode"}</span></a>
+            <a href="#" className="collapse-toggle" aria-expanded={!collapsed} title={collapsed ? "Expand sidebar" : undefined} onClick={(e) => { e.preventDefault(); setCollapsed(!collapsed); }}>
+              <Icon name={collapsed ? "panel-open" : "panel-close"} /><span className="lbl">Collapse sidebar</span>
+            </a>
           </nav>
-          <div className="user-row"><span className="avatar">{(user.email || "?").slice(0, 2).toUpperCase()}</span><div className="who"><b>{user.email}</b><small>{f.status === "error" ? "Offline" : "All accounts synced"}</small></div>
+          <div className="user-row" title={collapsed ? user.email : undefined}><span className="avatar">{(user.email || "?").slice(0, 2).toUpperCase()}</span><div className="who"><b>{user.email}</b><small>{f.status === "error" ? "Offline" : "All accounts synced"}</small></div>
             <Button size="sm" variant="ghost" iconOnly icon="logout" label="Log out" onClick={() => sb.auth.signOut()} /></div>
         </div>
       </aside>
@@ -184,6 +196,7 @@ function Shell({ user, theme, setTheme }: { user: any; theme: string; setTheme: 
           ? <div className="page"><LoadError msg={f.error} onRetry={() => f.api.reload().catch(() => {})} /></div>
           : page === "transactions" ? <Transactions open={open} params={params} />
           : page === "accounts" ? <Accounts open={open} />
+          : page === "income" ? <Income open={open} />
           : page === "budgets" ? <Budgets />
           : page === "bills" ? <Bills open={open} />
           : page === "goals" ? <Goals open={open} />

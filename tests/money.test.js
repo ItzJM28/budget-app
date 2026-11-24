@@ -83,6 +83,20 @@ test("bills: due day clamps to month end and paid bills are not owed", () => {
   assert.strictEqual(M.billStatus(bills[1], false, "2026-11", "2026-11-15"), "due-soon");
   assert.strictEqual(M.billStatus(bills[1], true, "2026-11", "2026-11-25"), "paid");
 });
+test("monthly income is expected money, never a bill you owe", () => {
+  const items = [
+    { id: "rent", active: true, due_day: 5, amount_centavos: 1300000 },
+    { id: "sal15", kind: "income", active: true, due_day: 15, amount_centavos: 1250000 },
+    { id: "sal30", kind: "income", active: true, due_day: 31, amount_centavos: 1250000 },
+    { id: "old", kind: "income", active: false, due_day: 1, amount_centavos: 999 },
+  ];
+  assert.deepStrictEqual(M.unpaidBills(items, {}, "2026-11").map(b => b.id), ["rent"]);
+  assert.strictEqual(M.safeToSpend([{ type: "bank", balance: 2000000 }], items, {}, "2026-11"), 700000);
+  const p = M.incomePlan(items, { sal15: true }, "2026-11");
+  assert.strictEqual(p.expected, 2500000);
+  assert.strictEqual(p.stillToCome, 1250000);
+  assert.deepStrictEqual(p.pending.map(b => [b.id, b.due]), [["sal30", "2026-11-30"]]);
+});
 test("budgetReport compares planned and actual, and lists unbudgeted spending", () => {
   const r = M.budgetReport(
     [{ category: "Food", limit_centavos: 1000 }, { category: "Rent", limit_centavos: 5000 }],
